@@ -29,7 +29,7 @@ DEFAULT_DATA_DIR = Path.home() / ".codonscope" / "data" / "species"
 
 # ── GTEx expression data URL ──────────────────────────────────────────────────
 GTEX_MEDIAN_TPM_URL = (
-    "https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/"
+    "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/rna-seq/"
     "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz"
 )
 
