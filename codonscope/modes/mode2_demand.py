@@ -52,7 +52,7 @@ def run_demand(
         species: Species name ("yeast" or "human").
         gene_ids: Gene identifiers (any format).
         k: k-mer size (1=mono, 2=di, 3=tri).
-        tissue: GTEx tissue name for human (default: cross-tissue median).
+        tissue: GTEx tissue name for human (default: HEK293T proxy).
         cell_line: CCLE cell line for human (e.g. HEK293T, HeLa, K562).
         expression_file: Path to user-supplied expression TSV
             (columns: gene_id, tpm).
@@ -144,9 +144,13 @@ def run_demand(
 
     results_df["amino_acid"] = results_df["kmer"].apply(_kmer_to_aa)
 
+    # Build systematic_name → common_name mapping for gene display
+    gene_name_map = _load_gene_name_map(species_dir)
+
     # Top demand-contributing genes
     top_genes = _rank_demand_genes(
         gene_seqs, expression, kmer_names, k=k,
+        gene_name_map=gene_name_map,
     )
 
     # Write outputs
@@ -192,7 +196,10 @@ def _load_expression(
     elif species == "human":
         if cell_line is not None:
             return _load_ccle_expression(species_dir, cell_line)
-        return _load_human_expression(species_dir, tissue=tissue)
+        if tissue is not None:
+            return _load_human_expression(species_dir, tissue=tissue)
+        # Default: HEK293T (proxy: Kidney - Cortex)
+        return _load_ccle_expression(species_dir, "HEK293T")
     else:
         raise ValueError(f"No expression data for species: {species!r}")
 
@@ -590,6 +597,27 @@ def _weighted_bootstrap_zscores(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Gene name mapping
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _load_gene_name_map(species_dir: Path) -> dict[str, str]:
+    """Load systematic_name → common_name mapping from gene_id_map.tsv."""
+    map_path = species_dir / "gene_id_map.tsv"
+    if not map_path.exists():
+        return {}
+    df = pd.read_csv(map_path, sep="\t")
+    if "systematic_name" not in df.columns or "common_name" not in df.columns:
+        return {}
+    mapping = {}
+    for _, row in df.iterrows():
+        sys_name = str(row["systematic_name"])
+        common = str(row.get("common_name", ""))
+        if common and common != "nan" and common != sys_name:
+            mapping[sys_name] = common
+    return mapping
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Demand gene ranking
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -598,11 +626,12 @@ def _rank_demand_genes(
     expression: dict[str, float],
     kmer_names: list[str],
     k: int = 1,
+    gene_name_map: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """Rank genes in the set by their contribution to total demand.
 
     Returns DataFrame with columns:
-        gene, tpm, n_codons, demand_weight, demand_fraction
+        gene, gene_name, tpm, n_codons, demand_weight, demand_fraction
     Sorted by demand_weight descending.
     """
     rows = []
@@ -613,8 +642,12 @@ def _rank_demand_genes(
         n_codons = len(seq) // 3
         weight = tpm * n_codons
         total_weight += weight
+        gene_name = gene
+        if gene_name_map:
+            gene_name = gene_name_map.get(gene, gene)
         rows.append({
             "gene": gene,
+            "gene_name": gene_name,
             "tpm": tpm,
             "n_codons": n_codons,
             "demand_weight": weight,

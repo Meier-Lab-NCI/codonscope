@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from codonscope.core.codons import all_possible_kmers, kmer_frequencies
+from codonscope.core.codons import CODON_TABLE, all_possible_kmers, annotate_kmer, kmer_frequencies
 from codonscope.core.sequences import SequenceDB
 from codonscope.core.statistics import (
     benjamini_hochberg,
@@ -108,6 +108,13 @@ def run_composition(
             gene_seqs, bg_path, k=k,
             n_bootstrap=n_bootstrap, trim_ramp=trim_ramp, seed=seed,
         )
+
+    # Add amino acid annotation column
+    def _kmer_to_aa(kmer: str) -> str:
+        codons = [kmer[i:i + 3] for i in range(0, len(kmer), 3)]
+        return "-".join(CODON_TABLE.get(c, "?") for c in codons)
+
+    results_df["amino_acid"] = results_df["kmer"].apply(_kmer_to_aa)
 
     # Run diagnostics
     diagnostics = _run_diagnostics(gene_seqs, species_dir)
@@ -303,11 +310,12 @@ def _plot_volcano(df: pd.DataFrame, path: Path) -> None:
     ax.scatter(z[sig], neg_log_p[sig], c="red", alpha=0.7, s=15, label="adj_p < 0.05")
 
     # Label top hits
+    k = len(df["kmer"].iloc[0]) // 3 if len(df) > 0 else 1
     top = df.head(10)
     for _, row in top.iterrows():
         if row["adjusted_p"] < 0.05:
             ax.annotate(
-                row["kmer"],
+                annotate_kmer(row["kmer"], k),
                 (row["z_score"], -np.log10(max(row["adjusted_p"], 1e-300))),
                 fontsize=7, alpha=0.8,
             )
@@ -345,7 +353,8 @@ def _plot_top_kmers(df: pd.DataFrame, path: Path, k: int) -> None:
     colors = ["#d73027" if z > 0 else "#4575b4" for z in plot_df["z_score"]]
     ax.barh(range(len(plot_df)), plot_df["z_score"], color=colors)
     ax.set_yticks(range(len(plot_df)))
-    ax.set_yticklabels(plot_df["kmer"], fontsize=7)
+    labels = [annotate_kmer(km, k) for km in plot_df["kmer"]]
+    ax.set_yticklabels(labels, fontsize=7)
     ax.set_xlabel("Z-score")
 
     k_label = {1: "Monocodon", 2: "Dicodon", 3: "Tricodon"}[k]

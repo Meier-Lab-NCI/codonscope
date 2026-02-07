@@ -174,6 +174,26 @@ class SequenceDB:
             if pd.notna(entrez) and str(entrez).strip():
                 self._entrez_to_sys[str(entrez).strip()] = sysname
 
+        # Human-specific: HGNC alias/previous symbol lookup
+        self._alias_to_info: dict[str, tuple[str, str, str]] = {}
+        alias_path = self._species_dir / "hgnc_aliases.tsv"
+        if self.species == "human" and alias_path.exists():
+            alias_df = pd.read_csv(alias_path, sep="\t")
+            for _, row in alias_df.iterrows():
+                alias_upper = str(row["alias"]).upper()
+                # Don't overwrite existing common_name lookups
+                if alias_upper not in self._common_to_sys:
+                    self._alias_to_info[alias_upper] = (
+                        str(row["ensembl_gene_id"]),
+                        str(row["canonical_symbol"]),
+                        str(row["alias_type"]),
+                    )
+            if self._alias_to_info:
+                logger.info(
+                    "Loaded %d HGNC aliases for human gene resolution",
+                    len(self._alias_to_info),
+                )
+
         # Load CDS sequences lazily
         self._sequences: dict[str, str] | None = None
 
@@ -307,6 +327,17 @@ class SequenceDB:
         canonical = self._sys_upper_to_canonical.get(upper)
         if canonical is not None:
             return canonical
+
+        # Human alias/previous symbol fallback
+        if self.species == "human" and self._alias_to_info:
+            info = self._alias_to_info.get(upper)
+            if info is not None:
+                sys_name, canonical_sym, alias_type = info
+                logger.info(
+                    "%s resolved as %s for %s (%s)",
+                    gene_id, alias_type, canonical_sym, sys_name,
+                )
+                return sys_name
 
         return None
 

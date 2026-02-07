@@ -33,15 +33,8 @@ GTEX_MEDIAN_TPM_URL = (
     "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz"
 )
 
-# ── DepMap CCLE expression data URLs (25Q1 release) ─────────────────────────
-DEPMAP_EXPRESSION_URL = (
-    "https://depmap.org/portal/download/all/"
-    "?releasename=DepMap+Public+25Q1&filename=OmicsExpressionProteinCodingGenesTPMLogp1.csv"
-)
-DEPMAP_MODEL_URL = (
-    "https://depmap.org/portal/download/all/"
-    "?releasename=DepMap+Public+25Q1&filename=Model.csv"
-)
+# ── DepMap file listing API ──────────────────────────────────────────────────
+DEPMAP_FILES_API = "https://depmap.org/portal/api/download/files"
 
 # ── Cell line → GTEx tissue proxy mapping (fallback) ────────────────────────
 CELL_LINE_TISSUE_PROXY: dict[str, str] = {
@@ -1292,9 +1285,48 @@ def _download_ccle_expression(species_dir: Path) -> None:
                 cn,
             )
 
+    # ── Step 0: Discover download URLs via DepMap API ──────────────────
+    logger.info("Querying DepMap file listing API...")
+    api_resp = requests.get(DEPMAP_FILES_API, timeout=60)
+    api_resp.raise_for_status()
+    files_df = pd.read_csv(io.StringIO(api_resp.text))
+
+    # Find the latest release that has both Model.csv and expression TPM
+    # Prefer the newest release (first rows in the listing)
+    model_url = None
+    expr_url = None
+    for _, row in files_df.iterrows():
+        fname = str(row.get("filename", ""))
+        url = str(row.get("url", ""))
+        if fname == "Model.csv" and model_url is None:
+            model_url = url
+        # Match protein-coding TPM files (name varies across releases)
+        if ("ExpressionTPMLogp1" in fname or "ExpressionProteinCodingGenesTPMLogp1" in fname) \
+                and "ProteinCoding" in fname and "Stranded" not in fname \
+                and "Transcript" not in fname and expr_url is None:
+            expr_url = url
+
+    # Fallback: accept any protein-coding TPM file
+    if expr_url is None:
+        for _, row in files_df.iterrows():
+            fname = str(row.get("filename", ""))
+            url = str(row.get("url", ""))
+            if "ExpressionProteinCodingGenesTPMLogp1" in fname \
+                    and "Stranded" not in fname and "Transcript" not in fname:
+                expr_url = url
+                break
+
+    if model_url is None or expr_url is None:
+        raise RuntimeError(
+            "Could not find Model.csv and/or expression TPM file in DepMap API. "
+            f"Model URL: {model_url}, Expression URL: {expr_url}"
+        )
+
+    logger.info("Found DepMap Model.csv and expression TPM URLs via API.")
+
     # ── Step 1: Download Model.csv ──────────────────────────────────────
     logger.info("Downloading DepMap Model.csv...")
-    resp = requests.get(DEPMAP_MODEL_URL, timeout=120)
+    resp = requests.get(model_url, timeout=120)
     resp.raise_for_status()
 
     model_df = pd.read_csv(io.StringIO(resp.text))
@@ -1320,13 +1352,37 @@ def _download_ccle_expression(species_dir: Path) -> None:
 
     # ── Step 2: Download expression matrix ──────────────────────────────
     logger.info("Downloading DepMap expression matrix (this may take a few minutes)...")
-    resp = requests.get(DEPMAP_EXPRESSION_URL, timeout=600, stream=True)
+    resp = requests.get(expr_url, timeout=600, stream=True)
     resp.raise_for_status()
 
-    # Parse CSV: first column is ModelID, rest are "GENE (ENTREZ)" columns
-    expr_df = pd.read_csv(io.StringIO(resp.text), index_col=0)
+    # Parse CSV — format has metadata columns before gene columns
+    # Columns: [index], SequencingID, ModelID, IsDefaultEntryForModel,
+    #           ModelConditionID, IsDefaultEntryForMC, GENE1 (ENTREZ), ...
+    expr_raw = pd.read_csv(io.StringIO(resp.text), index_col=0)
+
+    # Identify gene columns (format "SYMBOL (ENTREZ)") vs metadata columns
+    gene_cols = [c for c in expr_raw.columns if re.search(r"\(\d+\)$", str(c))]
+    meta_cols = [c for c in expr_raw.columns if c not in gene_cols]
     logger.info(
-        "Downloaded expression matrix: %d cell lines × %d genes",
+        "Downloaded expression matrix: %d rows × %d gene columns "
+        "(+ %d metadata columns)",
+        len(expr_raw), len(gene_cols), len(meta_cols),
+    )
+
+    # Use ModelID as index (ACH-xxxxxx), filter to default entries only
+    if "ModelID" in meta_cols:
+        expr_raw["_model_id"] = expr_raw["ModelID"]
+        # Keep only default entry per model to avoid duplicates
+        if "IsDefaultEntryForModel" in meta_cols:
+            expr_raw = expr_raw[expr_raw["IsDefaultEntryForModel"] == "Yes"]
+        expr_df = expr_raw[gene_cols].copy()
+        expr_df.index = expr_raw["_model_id"]
+    else:
+        # Fallback: assume first column is ModelID
+        expr_df = expr_raw[gene_cols].copy()
+
+    logger.info(
+        "Expression matrix after filtering: %d cell lines × %d genes",
         len(expr_df), len(expr_df.columns),
     )
 
@@ -1419,9 +1475,10 @@ def _download_ccle_expression(species_dir: Path) -> None:
                 found = True
                 break
         if not found:
+            cname_str = str(cname)
             meta_rows.append({
-                "cell_line_name": cname,
-                "stripped_name": cname.upper().replace("-", "").replace(" ", ""),
+                "cell_line_name": cname_str,
+                "stripped_name": cname_str.upper().replace("-", "").replace(" ", ""),
                 "lineage": "",
             })
 

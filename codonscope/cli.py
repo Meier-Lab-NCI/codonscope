@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     dem_parser.add_argument(
         "--tissue", type=str, default=None,
-        help="GTEx tissue name for human (default: cross-tissue median TPM)",
+        help="GTEx tissue name for human (default: HEK293T proxy)",
     )
     dem_parser.add_argument(
         "--cell-line", type=str, default=None,
@@ -495,7 +495,7 @@ def _cmd_demand(args: argparse.Namespace) -> int:
     elif cell_line:
         print(f"  Cell line: {cell_line}")
     elif args.species.lower() == "human" and not args.expression:
-        print("  Expression: cross-tissue median TPM (no --tissue specified)")
+        print("  Expression: HEK293T (default, use --tissue or --cell-line to change)")
     if args.top_n:
         print(f"  Top-N background: {args.top_n}")
     print()

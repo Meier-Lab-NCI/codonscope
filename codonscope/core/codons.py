@@ -71,6 +71,47 @@ def kmer_frequencies(sequence: str, k: int = 1) -> dict[str, float]:
     return {kmer: count / total for kmer, count in counts.items()}
 
 
+CODON_TABLE: dict[str, str] = {
+    "TTT": "Phe", "TTC": "Phe",
+    "TTA": "Leu", "TTG": "Leu", "CTT": "Leu", "CTC": "Leu",
+    "CTA": "Leu", "CTG": "Leu",
+    "ATT": "Ile", "ATC": "Ile", "ATA": "Ile",
+    "ATG": "Met",
+    "GTT": "Val", "GTC": "Val", "GTA": "Val", "GTG": "Val",
+    "TCT": "Ser", "TCC": "Ser", "TCA": "Ser", "TCG": "Ser",
+    "AGT": "Ser", "AGC": "Ser",
+    "CCT": "Pro", "CCC": "Pro", "CCA": "Pro", "CCG": "Pro",
+    "ACT": "Thr", "ACC": "Thr", "ACA": "Thr", "ACG": "Thr",
+    "GCT": "Ala", "GCC": "Ala", "GCA": "Ala", "GCG": "Ala",
+    "TAT": "Tyr", "TAC": "Tyr",
+    "CAT": "His", "CAC": "His",
+    "CAA": "Gln", "CAG": "Gln",
+    "AAT": "Asn", "AAC": "Asn",
+    "AAA": "Lys", "AAG": "Lys",
+    "GAT": "Asp", "GAC": "Asp",
+    "GAA": "Glu", "GAG": "Glu",
+    "TGT": "Cys", "TGC": "Cys",
+    "TGG": "Trp",
+    "CGT": "Arg", "CGC": "Arg", "CGA": "Arg", "CGG": "Arg",
+    "AGA": "Arg", "AGG": "Arg",
+    "GGT": "Gly", "GGC": "Gly", "GGA": "Gly", "GGG": "Gly",
+}
+
+
+def annotate_kmer(kmer: str, k: int = 1) -> str:
+    """Add amino acid annotation to a k-mer string.
+
+    k=1: "AAG" -> "AAG (Lys)"
+    k=2: "AAGGCT" -> "AAG-GCT (Lys-Ala)"
+    k=3: "AAGGCTTTC" -> "AAG-GCT-TTC (Lys-Ala-Phe)"
+    """
+    codons = [kmer[i:i + 3] for i in range(0, len(kmer), 3)]
+    aas = [CODON_TABLE.get(c, "?") for c in codons]
+    codon_str = "-".join(codons)
+    aa_str = "-".join(aas)
+    return f"{codon_str} ({aa_str})"
+
+
 def all_possible_kmers(k: int = 1, sense_only: bool = True) -> list[str]:
     """Return sorted list of all possible codon k-mers.
 

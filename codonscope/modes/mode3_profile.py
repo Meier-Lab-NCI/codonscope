@@ -11,10 +11,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from codonscope.core.codons import sequence_to_codons
+from codonscope.core.codons import CODON_TABLE, sequence_to_codons
 from codonscope.core.optimality import OptimalityScorer
 from codonscope.core.sequences import SequenceDB
-from codonscope.core.statistics import power_check
+from codonscope.core.statistics import (
+    bootstrap_pvalues,
+    bootstrap_zscores,
+    benjamini_hochberg,
+    compute_geneset_frequencies,
+    power_check,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +38,8 @@ def run_profile(
     wobble_penalty: float = DEFAULT_WOBBLE_PENALTY,
     ramp_codons: int = DEFAULT_RAMP_CODONS,
     method: str = "wtai",
+    n_bootstrap: int = 1_000,
+    seed: int | None = None,
     output_dir: str | Path | None = None,
     data_dir: str | Path | None = None,
 ) -> dict:
@@ -44,6 +52,8 @@ def run_profile(
         wobble_penalty: Penalty for wobble-decoded codons (default 0.5).
         ramp_codons: Number of 5' codons for ramp analysis (default 50).
         method: Scoring method — ``"tai"`` or ``"wtai"`` (default).
+        n_bootstrap: Bootstrap iterations for ramp/body composition.
+        seed: Random seed for reproducibility.
         output_dir: Directory for output files.  *None* = no file output.
         data_dir: Override default data directory.
 
@@ -52,6 +62,8 @@ def run_profile(
             "metagene_geneset"  : 1-D array (N_METAGENE_BINS,) — gene-set
             "metagene_genome"   : 1-D array (N_METAGENE_BINS,) — genome bg
             "ramp_analysis"     : dict with ramp statistics
+            "ramp_composition"  : DataFrame — ramp region codon composition
+            "body_composition"  : DataFrame — body region codon composition
             "per_gene_scores"   : DataFrame with per-gene mean tAI/wtAI
             "scorer"            : OptimalityScorer instance
             "id_summary"        : IDMapping
@@ -86,6 +98,12 @@ def run_profile(
         gene_seqs, all_seqs, scorer, ramp_codons, method,
     )
 
+    # ── Ramp vs body codon composition ────────────────────────────────
+    ramp_comp = _ramp_body_composition(
+        gene_seqs, all_seqs, scorer, ramp_codons,
+        n_bootstrap=n_bootstrap, seed=seed, method=method,
+    )
+
     # ── Output ────────────────────────────────────────────────────────
     if output_dir is not None:
         out = Path(output_dir)
@@ -98,6 +116,8 @@ def run_profile(
         "metagene_geneset": metagene_gs,
         "metagene_genome": metagene_bg,
         "ramp_analysis": ramp,
+        "ramp_composition": ramp_comp["ramp_composition"],
+        "body_composition": ramp_comp["body_composition"],
         "per_gene_scores": per_gene_df,
         "scorer": scorer,
         "id_summary": id_result,
@@ -249,6 +269,117 @@ def _ramp_scores(
         float(np.mean(body_vals)),
         np.array(deltas, dtype=np.float64),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ramp vs body codon composition
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _extract_region_seqs(
+    sequences: dict[str, str],
+    start_codon: int,
+    end_codon: int | None,
+) -> dict[str, str]:
+    """Extract a codon region [start_codon, end_codon) from each sequence.
+
+    Genes shorter than start_codon+1 codons are skipped.
+    """
+    result = {}
+    for gene, seq in sequences.items():
+        n_codons = len(seq) // 3
+        if n_codons <= start_codon:
+            continue
+        start_nt = start_codon * 3
+        end_nt = end_codon * 3 if end_codon is not None else len(seq)
+        sub = seq[start_nt:end_nt]
+        # Ensure divisible by 3
+        remainder = len(sub) % 3
+        if remainder:
+            sub = sub[: len(sub) - remainder]
+        if len(sub) >= 3:
+            result[gene] = sub
+    return result
+
+
+def _region_composition(
+    geneset_seqs: dict[str, str],
+    background_seqs: dict[str, str],
+    n_bootstrap: int,
+    seed: int | None,
+) -> pd.DataFrame:
+    """Compute monocodon composition with bootstrap Z-scores for a region."""
+    _, gs_mean, kmer_names = compute_geneset_frequencies(geneset_seqs, k=1)
+    bg_per_gene, bg_mean, _ = compute_geneset_frequencies(background_seqs, k=1)
+
+    n_genes = len(geneset_seqs)
+    z_scores, boot_mean, boot_std = bootstrap_zscores(
+        gs_mean, bg_per_gene, n_genes,
+        n_bootstrap=n_bootstrap, seed=seed,
+    )
+    p_values = bootstrap_pvalues(z_scores)
+    adj_p = benjamini_hochberg(p_values)
+
+    df = pd.DataFrame({
+        "codon": kmer_names,
+        "freq_geneset": gs_mean,
+        "freq_genome": boot_mean,
+        "z_score": z_scores,
+        "p_value": p_values,
+        "adjusted_p": adj_p,
+        "amino_acid": [CODON_TABLE.get(c, "?") for c in kmer_names],
+    })
+    return df.sort_values("z_score", key=np.abs, ascending=False).reset_index(
+        drop=True
+    )
+
+
+def _ramp_body_composition(
+    gene_seqs: dict[str, str],
+    all_seqs: dict[str, str],
+    scorer: OptimalityScorer,
+    ramp_codons: int,
+    n_bootstrap: int = 1_000,
+    seed: int | None = None,
+    method: str = "wtai",
+) -> dict:
+    """Compare codon composition of ramp vs body regions.
+
+    Splits each gene into ramp (first *ramp_codons* codons) and body
+    (remainder), computes monocodon frequencies for each region in
+    gene set vs genome, and bootstrap Z-scores.
+
+    Returns dict with:
+        ramp_composition: DataFrame — per-codon frequencies and Z-scores
+        body_composition: DataFrame — per-codon frequencies and Z-scores
+    Each DataFrame has columns: codon, freq_geneset, freq_genome,
+        z_score, p_value, adjusted_p, amino_acid, speed
+    """
+    # Extract ramp and body subsequences
+    gs_ramp = _extract_region_seqs(gene_seqs, 0, ramp_codons)
+    gs_body = _extract_region_seqs(gene_seqs, ramp_codons, None)
+    bg_ramp = _extract_region_seqs(all_seqs, 0, ramp_codons)
+    bg_body = _extract_region_seqs(all_seqs, ramp_codons, None)
+
+    logger.info(
+        "Ramp/body composition: %d/%d gene-set, %d/%d genome genes",
+        len(gs_ramp), len(gs_body), len(bg_ramp), len(bg_body),
+    )
+
+    # Composition analysis per region
+    ramp_df = _region_composition(gs_ramp, bg_ramp, n_bootstrap, seed)
+    body_df = _region_composition(gs_body, bg_body, n_bootstrap, seed)
+
+    # Annotate fast/slow from scorer
+    fast, slow = scorer.classify_codons(method=method)
+    for df in (ramp_df, body_df):
+        df["speed"] = df["codon"].apply(
+            lambda c: "fast" if c in fast else "slow"
+        )
+
+    return {
+        "ramp_composition": ramp_df,
+        "body_composition": body_df,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

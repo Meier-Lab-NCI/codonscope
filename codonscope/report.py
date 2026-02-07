@@ -62,6 +62,10 @@ def generate_report(
     t0 = time.time()
     sections: list[str] = []
 
+    # Data directory for TSV export: {report_stem}_data/
+    data_dir_out = output.parent / f"{output.stem}_data"
+    data_dir_out.mkdir(parents=True, exist_ok=True)
+
     # ── Gene list resolution ──────────────────────────────────────────────
     from codonscope.core.sequences import SequenceDB
     db = SequenceDB(species, data_dir=data_dir)
@@ -73,6 +77,7 @@ def generate_report(
     ))
 
     # ── Mode 1: Monocodon composition ────────────────────────────────────
+    mono_result = None
     try:
         logger.info("Running Mode 1: monocodon composition...")
         from codonscope.modes.mode1_composition import run_composition
@@ -81,6 +86,26 @@ def generate_report(
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
         sections.append(_section_mode1(mono_result, k=1, species=species, n_bootstrap=n_bootstrap))
+        mono_result["results"].to_csv(
+            data_dir_out / "mode1_monocodon.tsv", sep="\t", index=False, float_format="%.6g",
+        )
+
+        # Auto-rerun with matched background if GC or length bias detected
+        diag = mono_result.get("diagnostics", {})
+        if diag.get("gc_warning") or diag.get("length_warning"):
+            logger.info("GC/length bias detected — re-running monocodon with matched background...")
+            mono_matched = run_composition(
+                species=species, gene_ids=gene_ids, k=1,
+                background="matched",
+                n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
+            )
+            sections.append(_section_mode1(
+                mono_matched, k=1, species=species, n_bootstrap=n_bootstrap,
+                background_label="matched",
+            ))
+            mono_matched["results"].to_csv(
+                data_dir_out / "mode1_monocodon_matched.tsv", sep="\t", index=False, float_format="%.6g",
+            )
     except Exception as exc:
         logger.warning("Mode 1 (monocodon) failed: %s", exc)
         sections.append(_section_error("Mode 1: Monocodon Composition", exc))
@@ -93,6 +118,26 @@ def generate_report(
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
         sections.append(_section_mode1(di_result, k=2, species=species, n_bootstrap=n_bootstrap))
+        di_result["results"].to_csv(
+            data_dir_out / "mode1_dicodon.tsv", sep="\t", index=False, float_format="%.6g",
+        )
+
+        # Auto-rerun with matched background if GC or length bias detected
+        diag = di_result.get("diagnostics", {})
+        if diag.get("gc_warning") or diag.get("length_warning"):
+            logger.info("GC/length bias detected — re-running dicodon with matched background...")
+            di_matched = run_composition(
+                species=species, gene_ids=gene_ids, k=2,
+                background="matched",
+                n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
+            )
+            sections.append(_section_mode1(
+                di_matched, k=2, species=species, n_bootstrap=n_bootstrap,
+                background_label="matched",
+            ))
+            di_matched["results"].to_csv(
+                data_dir_out / "mode1_dicodon_matched.tsv", sep="\t", index=False, float_format="%.6g",
+            )
     except Exception as exc:
         logger.warning("Mode 1 (dicodon) failed: %s", exc)
         sections.append(_section_error("Mode 1: Dicodon Composition", exc))
@@ -106,6 +151,9 @@ def generate_report(
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
         sections.append(_section_mode5(dis_result, species=species))
+        dis_result["attribution"].to_csv(
+            data_dir_out / "mode5_attribution.tsv", sep="\t", index=False, float_format="%.6g",
+        )
     except Exception as exc:
         logger.warning("Mode 5 failed: %s", exc)
         sections.append(_section_error("Mode 5: Disentanglement", exc))
@@ -118,6 +166,17 @@ def generate_report(
             species=species, gene_ids=gene_ids, data_dir=data_dir,
         )
         sections.append(_section_mode3(prof_result, species=species))
+        prof_result["per_gene_scores"].to_csv(
+            data_dir_out / "mode3_profile.tsv", sep="\t", index=False, float_format="%.6g",
+        )
+        if "ramp_composition" in prof_result:
+            prof_result["ramp_composition"].to_csv(
+                data_dir_out / "mode3_ramp_composition.tsv", sep="\t", index=False, float_format="%.6g",
+            )
+        if "body_composition" in prof_result:
+            prof_result["body_composition"].to_csv(
+                data_dir_out / "mode3_body_composition.tsv", sep="\t", index=False, float_format="%.6g",
+            )
     except Exception as exc:
         logger.warning("Mode 3 failed: %s", exc)
         sections.append(_section_error("Mode 3: Optimality Profile", exc))
@@ -130,6 +189,13 @@ def generate_report(
             species=species, gene_ids=gene_ids, data_dir=data_dir,
         )
         sections.append(_section_mode4(col_result, species=species))
+        col_result["per_gene_fs_frac"].to_csv(
+            data_dir_out / "mode4_collision.tsv", sep="\t", index=False, float_format="%.6g",
+        )
+        if "fs_dicodons" in col_result and len(col_result["fs_dicodons"]) > 0:
+            col_result["fs_dicodons"].to_csv(
+                data_dir_out / "mode4_fs_dicodons.tsv", sep="\t", index=False, float_format="%.6g",
+            )
     except Exception as exc:
         logger.warning("Mode 4 failed: %s", exc)
         sections.append(_section_error("Mode 4: Collision Potential", exc))
@@ -144,6 +210,9 @@ def generate_report(
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
         sections.append(_section_mode2(dem_result, species=species))
+        dem_result["results"].to_csv(
+            data_dir_out / "mode2_demand.tsv", sep="\t", index=False, float_format="%.6g",
+        )
     except Exception as exc:
         logger.warning("Mode 2 failed: %s", exc)
         sections.append(_section_error("Mode 2: Translational Demand", exc))
@@ -159,6 +228,9 @@ def generate_report(
                 n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
             )
             sections.append(_section_mode6(cmp_result, species=species))
+            cmp_result["per_gene"].to_csv(
+                data_dir_out / "mode6_compare.tsv", sep="\t", index=False, float_format="%.6g",
+            )
         except Exception as exc:
             logger.warning("Mode 6 failed: %s", exc)
             sections.append(_section_error("Mode 6: Cross-Species Comparison", exc))
@@ -169,6 +241,7 @@ def generate_report(
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")
     logger.info("Report written to %s (%.1fs)", output, elapsed)
+    logger.info("Data tables written to %s/", data_dir_out)
     return output
 
 
@@ -423,7 +496,7 @@ def _section_gene_summary(
 """
 
 
-def _section_mode1(result: dict, k: int, species: str = "", n_bootstrap: int = 10_000) -> str:
+def _section_mode1(result: dict, k: int, species: str = "", n_bootstrap: int = 10_000, background_label: str = "") -> str:
     """Mode 1: Composition analysis section."""
     kname = {1: "Monocodon", 2: "Dicodon", 3: "Tricodon"}[k]
     df = result["results"]
@@ -528,12 +601,25 @@ Re-run with <code>--background matched</code> to compare against length- and
 GC-matched genes if you want to be thorough about it.</p>
 </div>"""
 
+    bg_suffix = f" (length+GC matched)" if background_label == "matched" else ""
+    matched_note = ""
+    if background_label == "matched":
+        matched_note = (
+            '<div class="method-note"><p><strong>Matched background.</strong> '
+            'This is a re-analysis using a background of genes matched for '
+            'CDS length and GC content, to control for nucleotide composition bias. '
+            'Compare these results to the all-genome analysis above &mdash; codons '
+            'that remain significant here are more likely to reflect genuine '
+            'translational selection rather than GC bias.</p></div>'
+        )
+
     return f"""
 <div class="section">
-<h2>Mode 1: {kname} Composition</h2>
+<h2>Mode 1: {kname} Composition{bg_suffix}</h2>
 <p>Genes analyzed: <strong>{n_genes}</strong> &nbsp;|&nbsp;
    Significant {kname.lower()}s (adj_p &lt; 0.05): <strong>{n_sig}</strong></p>
 {diag_html}
+{matched_note}
 <div class="plot-container">{_img_tag(plot_b64)}</div>
 <h3>Top Enriched ({len(enriched)} total)</h3>
 {top_enriched}
@@ -704,6 +790,13 @@ selection pressure. Or they just happen to start with rare codons. Biology is
 fun like that.</p>
 </div>"""
 
+    # Ramp vs body composition tables
+    ramp_comp = result.get("ramp_composition")
+    body_comp = result.get("body_composition")
+    ramp_body_html = ""
+    if ramp_comp is not None and body_comp is not None:
+        ramp_body_html = _ramp_body_tables(ramp_comp, body_comp, ramp)
+
     return f"""
 <div class="section">
 <h2>Mode 3: Optimality Profile</h2>
@@ -728,6 +821,7 @@ fun like that.</p>
   </div>
 </div>
 <div class="plot-container">{_img_tag(plot_b64)}</div>
+{ramp_body_html}
 {method_note}
 </div>
 """
@@ -781,6 +875,12 @@ FF/FS/SF/SS in your gene set differs from the genome. A low p-value means
 the transition pattern is genuinely unusual, not just noisy.</p>
 </div>"""
 
+    # Per-dicodon FS breakdown
+    fs_dicodons = result.get("fs_dicodons")
+    fs_dicodon_html = ""
+    if fs_dicodons is not None and len(fs_dicodons) > 0:
+        fs_dicodon_html = _fs_dicodon_table(fs_dicodons)
+
     return f"""
 <div class="section">
 <h2>Mode 4: Collision Potential</h2>
@@ -809,6 +909,7 @@ the transition pattern is genuinely unusual, not just noisy.</p>
 <tr><th>Transition</th><th>Gene Set</th><th>Genome</th><th>Fold Change</th></tr>
 {"".join(f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>{gs[t]/bg[t]:.3f}</td></tr>' if bg[t] > 0 else f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>-</td></tr>' for t in ('FF','FS','SF','SS'))}
 </table>
+{fs_dicodon_html}
 {method_note}
 </div>
 """
@@ -829,11 +930,13 @@ def _section_mode2(result: dict, species: str = "") -> str:
     # Demand bar plot
     plot_b64 = _plot_demand_bars(enriched.head(15), depleted.head(15), n_genes, tissue)
 
-    # Top genes table
+    # Top genes table — use gene_name if available, fall back to gene (ENSG)
+    name_col = "gene_name" if "gene_name" in top.columns else "gene"
     top_rows = ""
     for _, row in top.head(10).iterrows():
+        display_name = str(row[name_col])
         top_rows += f"""<tr>
-          <td><strong>{escape(str(row['gene']))}</strong></td>
+          <td><strong>{escape(display_name)}</strong></td>
           <td>{row['tpm']:.1f}</td>
           <td>{row['n_codons']}</td>
           <td>{row['demand_fraction']*100:.1f}%</td>
@@ -1094,6 +1197,137 @@ def _results_table(df: pd.DataFrame, k: int) -> str:
 <tr><th>K-mer</th>{aa_th}<th>Z-score</th><th>Observed</th><th>Expected</th><th>Adj. p</th><th>Cohen's d</th></tr>
 {rows}
 </table>"""
+
+
+def _fs_dicodon_table(fs_dicodons: pd.DataFrame) -> str:
+    """Build HTML table for per-dicodon FS enrichment breakdown."""
+    # Show top 20 most enriched FS dicodons
+    top = fs_dicodons.head(20)
+    rows = ""
+    for _, row in top.iterrows():
+        z = row["z_score"]
+        z_cls = "sig-pos" if z > 1.96 else ""
+        fold = row["fold_enrichment"]
+        fold_str = f"{fold:.2f}" if fold < 100 else ">100"
+        rows += f"""<tr>
+          <td><strong>{escape(str(row['dicodon']))}</strong></td>
+          <td>{escape(str(row['amino_acids']))}</td>
+          <td>{row['count_geneset']}</td>
+          <td>{row['freq_geneset']:.5f}</td>
+          <td>{row['freq_genome']:.5f}</td>
+          <td>{fold_str}</td>
+          <td class="{z_cls}">{z:+.2f}</td>
+          <td>{row['adjusted_p']:.2e}</td>
+        </tr>"""
+
+    if not rows:
+        return ""
+
+    return f"""
+<h3>Top Enriched FS Dicodons</h3>
+<div class="method-note">
+<p>Which specific fast&rarr;slow codon pairs are most enriched in your gene set?
+Each row shows a dicodon where the first codon is fast (high wtAI) and the
+second is slow (low wtAI). Frequency is relative to all dicodon transitions.
+Z-scores use a Poisson approximation against genome proportions.</p>
+</div>
+<table>
+<tr><th>Dicodon</th><th>AA transition</th><th>Count</th><th>Gene set freq</th>
+<th>Genome freq</th><th>Fold</th><th>Z-score</th><th>Adj. p</th></tr>
+{rows}
+</table>
+"""
+
+
+def _ramp_body_tables(
+    ramp_comp: pd.DataFrame,
+    body_comp: pd.DataFrame,
+    ramp: dict,
+) -> str:
+    """Build HTML tables for ramp vs body codon composition."""
+    ramp_codons = ramp.get("ramp_codons", 50)
+
+    # Focus on slow codons enriched in the ramp
+    ramp_slow = ramp_comp[
+        (ramp_comp["speed"] == "slow") & (ramp_comp["z_score"] > 1.5)
+    ].sort_values("z_score", ascending=False)
+
+    slow_rows = ""
+    for _, row in ramp_slow.head(15).iterrows():
+        z_cls = "sig-pos" if row["adjusted_p"] < 0.05 else ""
+        slow_rows += f"""<tr>
+          <td><strong>{escape(str(row['codon']))}</strong></td>
+          <td>{escape(str(row['amino_acid']))}</td>
+          <td class="{z_cls}">{row['z_score']:+.2f}</td>
+          <td>{row['freq_geneset']:.4f}</td>
+          <td>{row['freq_genome']:.4f}</td>
+          <td>{row['adjusted_p']:.2e}</td>
+        </tr>"""
+
+    if not slow_rows:
+        slow_html = "<p><em>No slow codons significantly enriched in the ramp (Z &gt; 1.5).</em></p>"
+    else:
+        slow_html = f"""<table>
+<tr><th>Codon</th><th>AA</th><th>Z-score</th><th>Ramp freq</th><th>Genome ramp</th><th>Adj. p</th></tr>
+{slow_rows}
+</table>"""
+
+    # Top significant codons in ramp vs body
+    ramp_sig = ramp_comp[ramp_comp["adjusted_p"] < 0.05].head(10)
+    body_sig = body_comp[body_comp["adjusted_p"] < 0.05].head(10)
+
+    ramp_rows = ""
+    for _, row in ramp_sig.iterrows():
+        z_cls = "sig-pos" if row["z_score"] > 0 else "sig-neg"
+        spd = f'<span class="badge badge-{"depleted" if row["speed"] == "slow" else "enriched"}">{row["speed"]}</span>'
+        ramp_rows += f"""<tr>
+          <td><strong>{escape(str(row['codon']))}</strong></td>
+          <td>{escape(str(row['amino_acid']))}</td>
+          <td>{spd}</td>
+          <td class="{z_cls}">{row['z_score']:+.2f}</td>
+          <td>{row['freq_geneset']:.4f}</td>
+          <td>{row['freq_genome']:.4f}</td>
+          <td>{row['adjusted_p']:.2e}</td>
+        </tr>"""
+
+    body_rows = ""
+    for _, row in body_sig.iterrows():
+        z_cls = "sig-pos" if row["z_score"] > 0 else "sig-neg"
+        spd = f'<span class="badge badge-{"depleted" if row["speed"] == "slow" else "enriched"}">{row["speed"]}</span>'
+        body_rows += f"""<tr>
+          <td><strong>{escape(str(row['codon']))}</strong></td>
+          <td>{escape(str(row['amino_acid']))}</td>
+          <td>{spd}</td>
+          <td class="{z_cls}">{row['z_score']:+.2f}</td>
+          <td>{row['freq_geneset']:.4f}</td>
+          <td>{row['freq_genome']:.4f}</td>
+          <td>{row['adjusted_p']:.2e}</td>
+        </tr>"""
+
+    ramp_table = f"""<table>
+<tr><th>Codon</th><th>AA</th><th>Speed</th><th>Z-score</th><th>Gene set</th><th>Genome</th><th>Adj. p</th></tr>
+{ramp_rows}
+</table>""" if ramp_rows else "<p><em>No significant codons in ramp region.</em></p>"
+
+    body_table = f"""<table>
+<tr><th>Codon</th><th>AA</th><th>Speed</th><th>Z-score</th><th>Gene set</th><th>Genome</th><th>Adj. p</th></tr>
+{body_rows}
+</table>""" if body_rows else "<p><em>No significant codons in body region.</em></p>"
+
+    return f"""
+<h3>Ramp vs Body Codon Composition</h3>
+<div class="method-note">
+<p>Monocodon frequencies computed separately for the <strong>ramp</strong>
+(first {ramp_codons} codons) and <strong>body</strong> (codon {ramp_codons + 1}+)
+of each gene, compared to the same regions in the genome background.</p>
+</div>
+<h3>Slow Codons Enriched in Ramp</h3>
+{slow_html}
+<h3>Ramp Region &mdash; Top Significant Codons</h3>
+{ramp_table}
+<h3>Body Region &mdash; Top Significant Codons</h3>
+{body_table}
+"""
 
 
 def _demand_table(df: pd.DataFrame) -> str:

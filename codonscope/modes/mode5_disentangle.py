@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from codonscope.core.codons import SENSE_CODONS, sequence_to_codons
+from codonscope.core.codons import CODON_TABLE, SENSE_CODONS, sequence_to_codons
 from codonscope.core.sequences import SequenceDB
 from codonscope.core.statistics import (
     benjamini_hochberg,
@@ -28,36 +28,6 @@ from codonscope.core.statistics import (
 )
 
 logger = logging.getLogger(__name__)
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Standard genetic code
-# ═══════════════════════════════════════════════════════════════════════════════
-
-CODON_TABLE: dict[str, str] = {
-    "TTT": "Phe", "TTC": "Phe",
-    "TTA": "Leu", "TTG": "Leu", "CTT": "Leu", "CTC": "Leu",
-    "CTA": "Leu", "CTG": "Leu",
-    "ATT": "Ile", "ATC": "Ile", "ATA": "Ile",
-    "ATG": "Met",
-    "GTT": "Val", "GTC": "Val", "GTA": "Val", "GTG": "Val",
-    "TCT": "Ser", "TCC": "Ser", "TCA": "Ser", "TCG": "Ser",
-    "AGT": "Ser", "AGC": "Ser",
-    "CCT": "Pro", "CCC": "Pro", "CCA": "Pro", "CCG": "Pro",
-    "ACT": "Thr", "ACC": "Thr", "ACA": "Thr", "ACG": "Thr",
-    "GCT": "Ala", "GCC": "Ala", "GCA": "Ala", "GCG": "Ala",
-    "TAT": "Tyr", "TAC": "Tyr",
-    "CAT": "His", "CAC": "His",
-    "CAA": "Gln", "CAG": "Gln",
-    "AAT": "Asn", "AAC": "Asn",
-    "AAA": "Lys", "AAG": "Lys",
-    "GAT": "Asp", "GAC": "Asp",
-    "GAA": "Glu", "GAG": "Glu",
-    "TGT": "Cys", "TGC": "Cys",
-    "TGG": "Trp",
-    "CGT": "Arg", "CGC": "Arg", "CGA": "Arg", "CGG": "Arg",
-    "AGA": "Arg", "AGG": "Arg",
-    "GGT": "Gly", "GGC": "Gly", "GGA": "Gly", "GGG": "Gly",
-}
 
 # Amino acids sorted alphabetically (20 standard)
 AMINO_ACIDS = sorted(set(CODON_TABLE.values()))

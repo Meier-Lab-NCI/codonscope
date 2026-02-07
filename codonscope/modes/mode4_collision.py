@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
 
-from codonscope.core.codons import SENSE_CODONS, sequence_to_codons
+from codonscope.core.codons import CODON_TABLE, SENSE_CODONS, sequence_to_codons
 from codonscope.core.optimality import OptimalityScorer
 from codonscope.core.sequences import SequenceDB
 from codonscope.core.statistics import power_check
@@ -104,6 +104,13 @@ def run_collision(
     # ── Positional FS analysis ────────────────────────────────────────
     fs_positions = _fs_position_analysis(gene_seqs, fast, slow)
 
+    # ── Per-dicodon FS breakdown ──────────────────────────────────────
+    fs_dicodons = _per_dicodon_fs_breakdown(
+        gene_seqs, all_seqs, fast, slow,
+        gs_total_transitions=sum(gs_counts.values()),
+        bg_total_transitions=sum(bg_counts.values()),
+    )
+
     # ── Output ────────────────────────────────────────────────────────
     if output_dir is not None:
         out = Path(output_dir)
@@ -123,6 +130,7 @@ def run_collision(
         "chi2_p": chi2_p,
         "per_gene_fs_frac": per_gene_df,
         "fs_positions": fs_positions,
+        "fs_dicodons": fs_dicodons,
         "fast_codons": fast,
         "slow_codons": slow,
         "threshold": used_threshold,
@@ -319,6 +327,103 @@ def _fs_position_analysis(
         })
 
     return pd.DataFrame(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Per-dicodon FS breakdown
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _count_fs_pairs(
+    sequences: dict[str, str],
+    fast: set[str],
+    slow: set[str],
+) -> dict[str, int]:
+    """Count occurrences of each specific fast→slow dicodon pair."""
+    counts: dict[str, int] = {}
+    for seq in sequences.values():
+        codons = sequence_to_codons(seq)
+        for i in range(len(codons) - 1):
+            c1, c2 = codons[i], codons[i + 1]
+            if c1 in fast and c2 in slow:
+                pair = c1 + c2
+                counts[pair] = counts.get(pair, 0) + 1
+    return counts
+
+
+def _per_dicodon_fs_breakdown(
+    gene_seqs: dict[str, str],
+    all_seqs: dict[str, str],
+    fast: set[str],
+    slow: set[str],
+    gs_total_transitions: int,
+    bg_total_transitions: int,
+) -> pd.DataFrame:
+    """Per-dicodon FS enrichment breakdown.
+
+    For each specific fast→slow codon pair, computes frequency in gene set
+    and genome (as fraction of all dicodon transitions) and a Poisson Z-score.
+
+    Returns DataFrame with columns: dicodon, codon1, codon2, amino_acids,
+        count_geneset, count_genome, freq_geneset, freq_genome,
+        fold_enrichment, z_score, p_value, adjusted_p
+    Sorted by Z-score descending.
+    """
+    from codonscope.core.statistics import bootstrap_pvalues, benjamini_hochberg
+
+    gs_fs_counts = _count_fs_pairs(gene_seqs, fast, slow)
+    bg_fs_counts = _count_fs_pairs(all_seqs, fast, slow)
+
+    if gs_total_transitions == 0 or bg_total_transitions == 0:
+        return pd.DataFrame()
+
+    # Collect all FS dicodon pairs seen in either set
+    all_pairs = sorted(set(gs_fs_counts.keys()) | set(bg_fs_counts.keys()))
+
+    rows = []
+    for pair in all_pairs:
+        gs_n = gs_fs_counts.get(pair, 0)
+        bg_n = bg_fs_counts.get(pair, 0)
+
+        gs_freq = gs_n / gs_total_transitions
+        bg_freq = bg_n / bg_total_transitions
+
+        # Expected count in gene set under null (genome proportions)
+        expected = bg_freq * gs_total_transitions
+
+        # Poisson Z-score
+        if expected > 0:
+            z = (gs_n - expected) / np.sqrt(expected)
+        else:
+            z = 0.0
+
+        fold = gs_freq / bg_freq if bg_freq > 0 else (float("inf") if gs_freq > 0 else 1.0)
+
+        c1, c2 = pair[:3], pair[3:]
+        aa1 = CODON_TABLE.get(c1, "?")
+        aa2 = CODON_TABLE.get(c2, "?")
+
+        rows.append({
+            "dicodon": f"{c1}-{c2}",
+            "codon1": c1,
+            "codon2": c2,
+            "amino_acids": f"{aa1}\u2192{aa2}",
+            "count_geneset": gs_n,
+            "count_genome": bg_n,
+            "freq_geneset": gs_freq,
+            "freq_genome": bg_freq,
+            "fold_enrichment": fold,
+            "z_score": z,
+        })
+
+    df = pd.DataFrame(rows)
+    if len(df) == 0:
+        return df
+
+    p_values = bootstrap_pvalues(df["z_score"].values)
+    df["p_value"] = p_values
+    df["adjusted_p"] = benjamini_hochberg(p_values)
+
+    return df.sort_values("z_score", ascending=False).reset_index(drop=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
