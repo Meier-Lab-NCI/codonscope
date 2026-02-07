@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 def run_composition(
     species: str,
     gene_ids: list[str],
-    k: int = 1,
+    k: int | None = None,
+    kmer: int | None = None,
+    kmer_size: int | None = None,
     background: str = "all",
     trim_ramp: int = 0,
     min_genes: int = 10,
@@ -43,7 +45,9 @@ def run_composition(
     Args:
         species: Species name (e.g. "yeast").
         gene_ids: List of gene identifiers (any format).
-        k: k-mer size (1=mono, 2=di, 3=tri).
+        k: k-mer size (1=mono, 2=di, 3=tri).  Aliases: kmer, kmer_size.
+        kmer: Alias for k.
+        kmer_size: Alias for k.
         background: "all" for whole genome, "matched" for length+GC matched.
         trim_ramp: Number of 5' codons to exclude (default 0).
         min_genes: Minimum gene list size.
@@ -60,13 +64,19 @@ def run_composition(
             "id_summary": dict with mapping stats
             "n_genes": int
     """
+    # Resolve k-mer size from aliases (k, kmer, kmer_size)
+    k_resolved = k or kmer or kmer_size or 1
+    if k_resolved not in (1, 2, 3):
+        raise ValueError(f"k-mer size must be 1, 2, or 3, got {k_resolved}")
+    k = k_resolved
+
     # Load database
     db = SequenceDB(species, data_dir=data_dir)
     species_dir = db.species_dir
 
     # Resolve gene IDs
     id_result = db.resolve_ids(gene_ids)
-    sys_names = list(id_result["mapping"].values())
+    sys_names = list(id_result.values())
 
     if len(sys_names) < min_genes:
         logger.warning(

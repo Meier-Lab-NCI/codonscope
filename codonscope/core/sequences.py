@@ -17,6 +17,92 @@ _YEAST_SYSTEMATIC_RE = re.compile(
 )
 
 
+class IDMapping:
+    """Result of gene ID resolution.  Behaves like a dict of {input_id: systematic_name}.
+
+    Usage::
+
+        result = db.resolve_ids(["ARG1", "HIS3", "YLR249W"])
+        len(result)                 # 3  (number of mapped genes)
+        list(result.values())       # ["YOL058W", "YOR202W", "YLR249W"]
+        result["ARG1"]              # "YOL058W"
+        db.get_sequences(result)    # works — get_sequences accepts IDMapping
+
+        # Unmapped info
+        result.unmapped             # list of IDs that failed to resolve
+        result.n_unmapped           # count
+    """
+
+    def __init__(
+        self,
+        mapping: dict[str, str],
+        unmapped: list[str],
+    ):
+        self._mapping = mapping
+        self.unmapped = unmapped
+        self.n_mapped = len(mapping)
+        self.n_unmapped = len(unmapped)
+
+    # ── dict-like interface (delegates to the input→systematic mapping) ──
+
+    def __len__(self) -> int:
+        return len(self._mapping)
+
+    def __getitem__(self, key: str) -> str:
+        return self._mapping[key]
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._mapping
+
+    def __iter__(self):
+        return iter(self._mapping)
+
+    def __bool__(self) -> bool:
+        return len(self._mapping) > 0
+
+    def keys(self):
+        return self._mapping.keys()
+
+    def values(self):
+        return self._mapping.values()
+
+    def items(self):
+        return self._mapping.items()
+
+    def get(self, key: str, default=None):
+        return self._mapping.get(key, default)
+
+    def __repr__(self) -> str:
+        return (
+            f"IDMapping({self.n_mapped} mapped, "
+            f"{self.n_unmapped} unmapped)"
+        )
+
+    # Keep backwards compat: result["mapping"] still works
+    def _compat_getitem(self, key: str):
+        compat_keys = {
+            "mapping": self._mapping,
+            "unmapped": self.unmapped,
+            "n_mapped": self.n_mapped,
+            "n_unmapped": self.n_unmapped,
+        }
+        if key in compat_keys:
+            return compat_keys[key]
+        # Fall through to normal mapping lookup
+        return self._mapping[key]
+
+    # Override __getitem__ to handle both old and new API
+    def __getitem__(self, key: str):
+        if key in ("mapping", "unmapped", "n_mapped", "n_unmapped"):
+            return {
+                "mapping": self._mapping,
+                "unmapped": self.unmapped,
+                "n_mapped": self.n_mapped,
+                "n_unmapped": self.n_unmapped,
+            }[key]
+        return self._mapping[key]
+
+
 class SequenceDB:
     """Interface to pre-downloaded CDS sequences for a species."""
 
@@ -48,15 +134,18 @@ class SequenceDB:
         self._sys_to_common: dict[str, str] = {}
         self._common_to_sys: dict[str, str] = {}
         self._sys_names: set[str] = set()
+        # Also keep canonical-case mapping for fast lookup
+        self._sys_upper_to_canonical: dict[str, str] = {}
 
         for _, row in self._gene_map.iterrows():
             sysname = row["systematic_name"]
             common = row.get("common_name", "")
-            self._sys_names.add(sysname.upper())
-            self._sys_to_common[sysname.upper()] = common if pd.notna(common) else ""
+            upper = sysname.upper()
+            self._sys_names.add(upper)
+            self._sys_upper_to_canonical[upper] = sysname
+            self._sys_to_common[upper] = common if pd.notna(common) else ""
             if pd.notna(common) and common:
                 common_upper = common.upper()
-                # Handle ambiguity: if same common name maps to multiple systematic names
                 if common_upper in self._common_to_sys:
                     logger.debug(
                         "Ambiguous common name %s: %s and %s",
@@ -98,17 +187,22 @@ class SequenceDB:
         self._sequences = sequences
         return sequences
 
-    def resolve_ids(self, gene_ids: list[str]) -> dict:
+    def resolve_ids(self, gene_ids: list[str]) -> IDMapping:
         """Map input gene IDs to canonical systematic names.
 
         Auto-detect ID type (systematic name, common name, etc.)
+        Case-insensitive for both systematic and common names.
 
         Returns:
-            dict with keys:
-                "mapping": {input_id: systematic_name} for successful mappings
-                "unmapped": list of IDs that could not be resolved
-                "n_mapped": int
-                "n_unmapped": int
+            IDMapping that behaves like a dict {input_id: systematic_name}.
+            Also has .unmapped, .n_mapped, .n_unmapped attributes.
+
+        Example::
+
+            result = db.resolve_ids(["ARG1", "YLR249W"])
+            len(result)             # 2
+            list(result.values())   # ["YOL058W", "YLR249W"]
+            result.unmapped         # []
         """
         mapping: dict[str, str] = {}
         unmapped: list[str] = []
@@ -125,15 +219,10 @@ class SequenceDB:
                 unmapped.append(gid_stripped)
                 logger.warning("Could not resolve gene ID: %s", gid_stripped)
 
-        result = {
-            "mapping": mapping,
-            "unmapped": unmapped,
-            "n_mapped": len(mapping),
-            "n_unmapped": len(unmapped),
-        }
+        result = IDMapping(mapping, unmapped)
         logger.info(
             "ID resolution: %d mapped, %d unmapped",
-            result["n_mapped"], result["n_unmapped"],
+            result.n_mapped, result.n_unmapped,
         )
         return result
 
@@ -143,11 +232,9 @@ class SequenceDB:
 
         # Check if it's a yeast systematic name
         if _YEAST_SYSTEMATIC_RE.match(gene_id):
-            if upper in self._sys_names:
-                # Return the canonical case from our data
-                for _, row in self._gene_map.iterrows():
-                    if row["systematic_name"].upper() == upper:
-                        return row["systematic_name"]
+            canonical = self._sys_upper_to_canonical.get(upper)
+            if canonical is not None:
+                return canonical
             return None
 
         # Check for Ensembl ID (not supported for yeast)
@@ -162,18 +249,39 @@ class SequenceDB:
             return self._common_to_sys[upper]
 
         # Try as systematic name without regex (some edge cases)
-        if upper in self._sys_names:
-            for _, row in self._gene_map.iterrows():
-                if row["systematic_name"].upper() == upper:
-                    return row["systematic_name"]
+        canonical = self._sys_upper_to_canonical.get(upper)
+        if canonical is not None:
+            return canonical
 
         return None
 
-    def get_sequences(self, systematic_names: list[str]) -> dict[str, str]:
+    def get_sequences(self, names) -> dict[str, str]:
         """Return {systematic_name: cds_sequence} for requested genes.
 
         Sequences are already validated and stop-codon-stripped.
+
+        Args:
+            names: Systematic names as any of:
+                - list of strings: ["YOL058W", "YOR202W"]
+                - IDMapping from resolve_ids() (uses the mapped values)
+                - dict {input_id: systematic_name} (uses the values)
         """
+        if isinstance(names, IDMapping):
+            systematic_names = list(names.values())
+        elif isinstance(names, dict):
+            systematic_names = list(names.values())
+        else:
+            systematic_names = list(names)
+
+        # Validate: all entries must be strings
+        for i, name in enumerate(systematic_names):
+            if not isinstance(name, str):
+                raise TypeError(
+                    f"get_sequences expects gene name strings, got "
+                    f"{type(name).__name__} at index {i}. "
+                    f"Hint: pass list(result.values()) or the IDMapping directly."
+                )
+
         all_seqs = self._load_sequences()
         result: dict[str, str] = {}
         for name in systematic_names:
@@ -182,6 +290,20 @@ class SequenceDB:
             else:
                 logger.warning("No CDS sequence found for: %s", name)
         return result
+
+    def get_sequences_for_ids(self, gene_ids: list[str]) -> dict[str, str]:
+        """Convenience: resolve gene IDs and return their CDS sequences.
+
+        Combines resolve_ids() + get_sequences() in one call.
+
+        Args:
+            gene_ids: List of gene identifiers (any format).
+
+        Returns:
+            {systematic_name: cds_sequence} for all successfully resolved genes.
+        """
+        result = self.resolve_ids(gene_ids)
+        return self.get_sequences(result)
 
     def get_all_sequences(self) -> dict[str, str]:
         """Return all genome CDS sequences (for background computation)."""
