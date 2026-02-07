@@ -80,6 +80,34 @@ def main(argv: list[str] | None = None) -> int:
         help="Override default data directory",
     )
 
+    # ── disentangle (Mode 5) ──────────────────────────────────────────────
+    dis_parser = subparsers.add_parser(
+        "disentangle", help="Mode 5: AA vs codon disentanglement"
+    )
+    dis_parser.add_argument(
+        "--species", required=True, help="Species name (e.g. yeast, human)"
+    )
+    dis_parser.add_argument(
+        "--genes", required=True,
+        help="Path to gene list file (one ID per line, or comma-separated)",
+    )
+    dis_parser.add_argument(
+        "--n-bootstrap", type=int, default=10000,
+        help="Number of bootstrap iterations (default: 10000)",
+    )
+    dis_parser.add_argument(
+        "--output-dir", type=str, default="./codonscope_output",
+        help="Output directory (default: ./codonscope_output)",
+    )
+    dis_parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed for reproducibility",
+    )
+    dis_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory",
+    )
+
     args = parser.parse_args(argv)
 
     # Set up logging
@@ -97,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_download(args)
     elif args.command == "composition":
         return _cmd_composition(args)
+    elif args.command == "disentangle":
+        return _cmd_disentangle(args)
     else:
         parser.print_help()
         return 1
@@ -189,6 +219,58 @@ def _cmd_composition(args: argparse.Namespace) -> int:
                 print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
                       f"obs={row['observed_freq']:.4f}  exp={row['expected_freq']:.4f}  "
                       f"adj_p={row['adjusted_p']:.2e}")
+
+    if args.output_dir:
+        print(f"\nOutput files written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_disentangle(args: argparse.Namespace) -> int:
+    """Handle the disentangle subcommand."""
+    from codonscope.modes.mode5_disentangle import run_disentangle
+
+    gene_ids = _parse_gene_list(args.genes)
+    if not gene_ids:
+        logging.error("No gene IDs found in %s", args.genes)
+        return 1
+
+    print("CodonScope Mode 5: AA vs Codon Disentanglement")
+    print(f"  Species: {args.species}")
+    print(f"  Genes: {len(gene_ids)} IDs from {args.genes}")
+    print()
+
+    result = run_disentangle(
+        species=args.species,
+        gene_ids=gene_ids,
+        n_bootstrap=args.n_bootstrap,
+        output_dir=args.output_dir,
+        seed=args.seed,
+        data_dir=args.data_dir,
+    )
+
+    summary = result["summary"]
+    print(f"Genes analyzed: {result['n_genes']}")
+    print(f"\n{summary['summary_text']}")
+
+    # Show top AA deviations
+    aa_sig = result["aa_results"][result["aa_results"]["adjusted_p"] < 0.05]
+    if len(aa_sig) > 0:
+        print(f"\nSignificant amino acid deviations ({len(aa_sig)}):")
+        for _, row in aa_sig.head(10).iterrows():
+            direction = "enriched" if row["z_score"] > 0 else "depleted"
+            print(f"  {row['amino_acid']:>4s}  Z={row['z_score']:+6.2f}  "
+                  f"adj_p={row['adjusted_p']:.2e}  ({direction})")
+
+    # Show top RSCU deviations
+    rscu_sig = result["rscu_results"][result["rscu_results"]["adjusted_p"] < 0.05]
+    if len(rscu_sig) > 0:
+        print(f"\nSignificant RSCU deviations ({len(rscu_sig)}):")
+        for _, row in rscu_sig.head(10).iterrows():
+            direction = "preferred" if row["z_score"] > 0 else "avoided"
+            print(f"  {row['codon']:>3s} ({row['amino_acid']:>3s})  "
+                  f"RSCU Z={row['z_score']:+6.2f}  "
+                  f"adj_p={row['adjusted_p']:.2e}  ({direction})")
 
     if args.output_dir:
         print(f"\nOutput files written to {args.output_dir}/")
