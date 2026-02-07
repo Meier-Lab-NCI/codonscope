@@ -80,6 +80,74 @@ def main(argv: list[str] | None = None) -> int:
         help="Override default data directory",
     )
 
+    # ── profile (Mode 3) ──────────────────────────────────────────────────
+    prof_parser = subparsers.add_parser(
+        "profile", help="Mode 3: Optimality profile (metagene + ramp)"
+    )
+    prof_parser.add_argument(
+        "--species", required=True, help="Species name (e.g. yeast, human)"
+    )
+    prof_parser.add_argument(
+        "--genes", required=True,
+        help="Path to gene list file (one ID per line, or comma-separated)",
+    )
+    prof_parser.add_argument(
+        "--window", type=int, default=10,
+        help="Sliding window size in codons (default: 10)",
+    )
+    prof_parser.add_argument(
+        "--wobble-penalty", type=float, default=0.5,
+        help="Wobble decoding penalty for wtAI (default: 0.5)",
+    )
+    prof_parser.add_argument(
+        "--ramp-codons", type=int, default=50,
+        help="Number of 5' codons for ramp analysis (default: 50)",
+    )
+    prof_parser.add_argument(
+        "--method", default="wtai", choices=["tai", "wtai"],
+        help="Scoring method: tai or wtai (default: wtai)",
+    )
+    prof_parser.add_argument(
+        "--output-dir", type=str, default="./codonscope_output",
+        help="Output directory (default: ./codonscope_output)",
+    )
+    prof_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory",
+    )
+
+    # ── collision (Mode 4) ─────────────────────────────────────────────────
+    col_parser = subparsers.add_parser(
+        "collision", help="Mode 4: Collision potential (FS transitions)"
+    )
+    col_parser.add_argument(
+        "--species", required=True, help="Species name (e.g. yeast, human)"
+    )
+    col_parser.add_argument(
+        "--genes", required=True,
+        help="Path to gene list file (one ID per line, or comma-separated)",
+    )
+    col_parser.add_argument(
+        "--wobble-penalty", type=float, default=0.5,
+        help="Wobble decoding penalty for wtAI (default: 0.5)",
+    )
+    col_parser.add_argument(
+        "--threshold", type=float, default=None,
+        help="Fast/slow cutoff (default: median wtAI)",
+    )
+    col_parser.add_argument(
+        "--method", default="wtai", choices=["tai", "wtai"],
+        help="Scoring method: tai or wtai (default: wtai)",
+    )
+    col_parser.add_argument(
+        "--output-dir", type=str, default="./codonscope_output",
+        help="Output directory (default: ./codonscope_output)",
+    )
+    col_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory",
+    )
+
     # ── disentangle (Mode 5) ──────────────────────────────────────────────
     dis_parser = subparsers.add_parser(
         "disentangle", help="Mode 5: AA vs codon disentanglement"
@@ -125,6 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_download(args)
     elif args.command == "composition":
         return _cmd_composition(args)
+    elif args.command == "profile":
+        return _cmd_profile(args)
+    elif args.command == "collision":
+        return _cmd_collision(args)
     elif args.command == "disentangle":
         return _cmd_disentangle(args)
     else:
@@ -219,6 +291,109 @@ def _cmd_composition(args: argparse.Namespace) -> int:
                 print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
                       f"obs={row['observed_freq']:.4f}  exp={row['expected_freq']:.4f}  "
                       f"adj_p={row['adjusted_p']:.2e}")
+
+    if args.output_dir:
+        print(f"\nOutput files written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_profile(args: argparse.Namespace) -> int:
+    """Handle the profile subcommand."""
+    from codonscope.modes.mode3_profile import run_profile
+
+    gene_ids = _parse_gene_list(args.genes)
+    if not gene_ids:
+        logging.error("No gene IDs found in %s", args.genes)
+        return 1
+
+    print("CodonScope Mode 3: Optimality Profile")
+    print(f"  Species: {args.species}")
+    print(f"  Genes: {len(gene_ids)} IDs from {args.genes}")
+    print(f"  Method: {args.method}")
+    print(f"  Window: {args.window} codons")
+    print()
+
+    result = run_profile(
+        species=args.species,
+        gene_ids=gene_ids,
+        window=args.window,
+        wobble_penalty=args.wobble_penalty,
+        ramp_codons=args.ramp_codons,
+        method=args.method,
+        output_dir=args.output_dir,
+        data_dir=args.data_dir,
+    )
+
+    print(f"Genes analyzed: {result['n_genes']}")
+
+    # Ramp analysis
+    ramp = result["ramp_analysis"]
+    print(f"\nRamp analysis (first {ramp['ramp_codons']} codons):")
+    print(f"  Gene set:  ramp={ramp['geneset_ramp_mean']:.4f}  "
+          f"body={ramp['geneset_body_mean']:.4f}  "
+          f"delta={ramp['geneset_ramp_delta']:+.4f}")
+    print(f"  Genome:    ramp={ramp['genome_ramp_mean']:.4f}  "
+          f"body={ramp['genome_body_mean']:.4f}  "
+          f"delta={ramp['genome_ramp_delta']:+.4f}")
+
+    # Per-gene score summary
+    scores = result["per_gene_scores"]
+    col = "wtai" if args.method == "wtai" else "tai"
+    print(f"\nPer-gene {args.method.upper()} summary:")
+    print(f"  Mean: {scores[col].mean():.4f}")
+    print(f"  Std:  {scores[col].std():.4f}")
+    print(f"  Min:  {scores[col].min():.4f}")
+    print(f"  Max:  {scores[col].max():.4f}")
+
+    if args.output_dir:
+        print(f"\nOutput files written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_collision(args: argparse.Namespace) -> int:
+    """Handle the collision subcommand."""
+    from codonscope.modes.mode4_collision import run_collision
+
+    gene_ids = _parse_gene_list(args.genes)
+    if not gene_ids:
+        logging.error("No gene IDs found in %s", args.genes)
+        return 1
+
+    print("CodonScope Mode 4: Collision Potential")
+    print(f"  Species: {args.species}")
+    print(f"  Genes: {len(gene_ids)} IDs from {args.genes}")
+    print(f"  Method: {args.method}")
+    print()
+
+    result = run_collision(
+        species=args.species,
+        gene_ids=gene_ids,
+        wobble_penalty=args.wobble_penalty,
+        threshold=args.threshold,
+        method=args.method,
+        output_dir=args.output_dir,
+        data_dir=args.data_dir,
+    )
+
+    print(f"Genes analyzed: {result['n_genes']}")
+    print(f"Fast/slow threshold: {result['threshold']:.4f}")
+    print(f"Fast codons: {len(result['fast_codons'])}  "
+          f"Slow codons: {len(result['slow_codons'])}")
+
+    # Transition matrices
+    gs = result["transition_matrix_geneset"]
+    bg = result["transition_matrix_genome"]
+    print(f"\nTransition proportions:")
+    print(f"  {'Type':>4s}  {'Gene set':>10s}  {'Genome':>10s}")
+    for t in ("FF", "FS", "SF", "SS"):
+        print(f"  {t:>4s}  {gs[t]:10.4f}  {bg[t]:10.4f}")
+
+    print(f"\nFS enrichment (gene set / genome): {result['fs_enrichment']:.3f}")
+    print(f"FS/SF ratio — gene set: {result['fs_sf_ratio_geneset']:.3f}  "
+          f"genome: {result['fs_sf_ratio_genome']:.3f}")
+    print(f"Chi-squared: {result['chi2_stat']:.2f}  p={result['chi2_p']:.2e}")
 
     if args.output_dir:
         print(f"\nOutput files written to {args.output_dir}/")

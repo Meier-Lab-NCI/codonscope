@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**131 tests passing. 10 commits on main.**
+**179 tests passing. 12 commits on main.**
 
 ### Build progress
 
@@ -19,8 +19,8 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 3 | Mode 1 (composition) + CLI | ✅ Done |
 | 4 | Human species support | ✅ Done |
 | 5 | Mode 5 (AA vs codon disentanglement) | ✅ Done |
-| 6 | Mode 3 (optimality profile) + Mode 4 (collision potential) | ← Next |
-| 7 | Mode 2 (translational demand) | Planned |
+| 6 | Mode 3 (optimality profile) + Mode 4 (collision potential) | ✅ Done |
+| 7 | Mode 2 (translational demand) | ← Next |
 | 8 | Mode 6 (cross-species comparison) | Planned |
 | 9 | HTML report generation | Planned |
 
@@ -31,22 +31,27 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/core/codons.py` — k-mer counting engine (mono/di/tri), `sequence_to_codons()`, `count_kmers()`, `kmer_frequencies()`, `all_possible_kmers()`, `SENSE_CODONS` (61 sense codons)
 - `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Resolves yeast (systematic name, common name) and human (HGNC symbol, ENSG, ENST, Entrez ID) gene identifiers. `get_sequences()` accepts IDMapping, dict, or list[str].
 - `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline
+- `codonscope/core/optimality.py` — `OptimalityScorer` class: loads wobble_rules.tsv, computes per-codon tAI and wtAI weights (normalised 0–1, pseudocount for zero-copy anticodons). Provides `gene_tai()`, `gene_wtai()`, `per_position_scores()`, `smooth_profile()`, `classify_codons()` (fast/slow by median threshold).
 
 **Data layer:**
 - `codonscope/data/download.py` — `download("yeast")` and `download("human")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds. Curated wobble rule tables for both species.
 
 **Analysis modes:**
 - `codonscope/modes/mode1_composition.py` — `run_composition()` with "all" or "matched" (length+GC) backgrounds, KS diagnostics, volcano + bar chart plots. Accepts k=1/2/3 (aliases: `kmer`, `kmer_size`).
+- `codonscope/modes/mode3_profile.py` — `run_profile()` metagene optimality profiling. Per-position tAI/wtAI scoring with sliding window, normalised to 100 positional bins. Ramp analysis (first N codons vs body). Compares gene set metagene to genome background. Two-panel plot (metagene line + ramp bar chart).
+- `codonscope/modes/mode4_collision.py` — `run_collision()` ribosome collision potential. Classifies codons as fast/slow via wtAI median threshold, counts FF/FS/SF/SS dicodon transitions. Reports FS enrichment ratio, FS/SF ratio, chi-squared test vs genome. Per-gene FS fractions and positional FS clustering. Two-panel plot (transition bars + positional FS).
 - `codonscope/modes/mode5_disentangle.py` — `run_disentangle()` with two-layer decomposition (AA composition + RSCU), attribution (AA-driven / synonymous-driven / both), synonymous driver classification (tRNA supply, GC3 bias, wobble avoidance), two-panel plot.
 
 **CLI:**
-- `codonscope/cli.py` — argparse with subcommands: `download`, `composition`, `disentangle`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
+- `codonscope/cli.py` — argparse with subcommands: `download`, `composition`, `profile`, `collision`, `disentangle`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
 
-**Tests (131 passing):**
+**Tests (179 passing):**
 - `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds
 - `tests/test_statistics.py` — 29 tests: bootstrap, BH correction, Cohen's d, KS diagnostics, yeast positive controls (RP genes, YEF3)
 - `tests/test_mode1.py` — 19 tests: gene list parsing, composition pipeline, matched background, diagnostics, CLI, RP positive controls
 - `tests/test_human.py` — 33 tests: human download files, gene map structure, CDS validation, ID resolution (HGNC/ENSG/ENST/Entrez), backgrounds, Mode 1 on human RP genes
+- `tests/test_mode3.py` — 26 tests: OptimalityScorer (13 unit tests), metagene profile shape/values, ramp analysis, yeast RP integration (high optimality + ramp), random gene negative control, CLI
+- `tests/test_mode4.py` — 22 tests: transition counting (FF/FS/SF/SS), proportions, FS enrichment, chi-squared, yeast RP integration (low collision, high FF), Gcn4 comparison, CLI
 - `tests/test_mode5.py` — 27 tests: codon table, AA frequencies, RSCU, attribution logic, summary, Gcn4 + RP integration tests, CLI
 
 ### Species data (in `~/.codonscope/data/species/`)
@@ -65,8 +70,8 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ### Positive controls (verified)
 
-- **Yeast Gcn4 targets (~59 mapped genes):** AGA-GAA dicodon Z=3.66 (all bg), Z=4.33 (matched bg, adj_p=9.6e-4). Top dicodon enrichment is GGT-containing (glycine). Mode 5 confirms Gly AA is enriched (AA-driven signal).
-- **Yeast ribosomal proteins (~114 mapped genes):** Strong monocodon and dicodon bias. Mode 5 confirms synonymous-driven RSCU deviations (translational selection).
+- **Yeast Gcn4 targets (~59 mapped genes):** AGA-GAA dicodon Z=3.66 (all bg), Z=4.33 (matched bg, adj_p=9.6e-4). Top dicodon enrichment is GGT-containing (glycine). Mode 5 confirms Gly AA is enriched (AA-driven signal). Mode 4 shows FS transitions present.
+- **Yeast ribosomal proteins (~114 mapped genes):** Strong monocodon and dicodon bias. Mode 5 confirms synonymous-driven RSCU deviations (translational selection). Mode 3 shows high optimality throughout with visible ramp. Mode 4 shows high FF proportion and low FS enrichment (≤1.1).
 - **Human ribosomal proteins (14 genes):** Mode 1 monocodon shows significant codon bias.
 
 ### Known issues
@@ -78,7 +83,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 5. **Mode 5 synonymous driver classification is heuristic.** Uses simple rules (Watson-Crick + enriched → wobble avoidance, high tRNA copies + enriched → tRNA supply). A more rigorous approach would use per-family regression.
 6. **No expression data yet.** Mode 2 (translational demand) requires GTEx/yeast expression data. Not downloaded.
 7. **No ortholog data yet.** Mode 6 (cross-species comparison) requires Ensembl Compara. Not downloaded.
-8. **`optimality.py` and `orthologs.py` not yet created.** Needed for Modes 3, 4, and 6.
+8. **`orthologs.py` not yet created.** Needed for Mode 6.
 
 ## Design decisions (read before coding)
 
@@ -103,6 +108,12 @@ python3 -m pytest tests/ -v
 
 # Mode 1: Composition analysis
 python3 -m codonscope.cli composition --species yeast --genes genelist.txt --kmer 2
+
+# Mode 3: Optimality profile (metagene + ramp)
+python3 -m codonscope.cli profile --species yeast --genes genelist.txt --method wtai
+
+# Mode 4: Collision potential (FS transitions)
+python3 -m codonscope.cli collision --species yeast --genes genelist.txt
 
 # Mode 5: Disentanglement
 python3 -m codonscope.cli disentangle --species yeast --genes genelist.txt
