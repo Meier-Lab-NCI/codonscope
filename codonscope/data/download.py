@@ -27,6 +27,43 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = Path.home() / ".codonscope" / "data" / "species"
 
+# ── GTEx expression data URL ──────────────────────────────────────────────────
+GTEX_MEDIAN_TPM_URL = (
+    "https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/"
+    "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz"
+)
+
+# ── Yeast highly-expressed genes (rich media / YPD) ──────────────────────────
+# Well-established expression values from multiple studies (Holstege 1998,
+# Nagalakshmi 2008, Pelechano 2010).  Values are approximate relative mRNA
+# abundance.  RP genes (RPL*/RPS*) are assigned categorically.
+YEAST_HIGH_EXPRESSION: dict[str, float] = {
+    # Glycolytic enzymes
+    "TDH3": 5000, "TDH2": 3000, "TDH1": 1000,
+    "ENO2": 3500, "ENO1": 1500,
+    "PGK1": 3000, "FBA1": 2500,
+    "ADH1": 3500, "PDC1": 3000,
+    "TPI1": 2000, "GPM1": 2000, "PYK1": 2000, "CDC19": 2000,
+    "PFK1": 500, "PFK2": 500, "HXK2": 500,
+    # Translation factors
+    "TEF1": 3000, "TEF2": 3000, "EFB1": 2000,
+    "TIF1": 1500, "YEF3": 1200, "SUP35": 400,
+    # Chaperones
+    "SSA1": 1500, "SSA2": 1500, "SSB1": 1200, "SSB2": 1200,
+    "HSP26": 500, "HSP82": 600, "HSC82": 600,
+    # Cytoskeleton / structural
+    "ACT1": 1500, "TUB1": 400, "TUB2": 400,
+    # Other abundant
+    "UBI4": 500, "GDH1": 800, "ALD6": 800,
+    "OLE1": 400, "FAS1": 400, "FAS2": 400,
+    "PDA1": 500, "PDB1": 500,
+    "AHP1": 500, "TSA1": 600,
+    "TRX2": 400, "GLK1": 300,
+    # Histones
+    "HTA1": 300, "HTA2": 300, "HTB1": 300, "HTB2": 300,
+    "HHF1": 300, "HHF2": 300, "HHT1": 300, "HHT2": 300,
+}
+
 # ── SGD download URL ──────────────────────────────────────────────────────────
 SGD_CDS_URL = (
     "https://downloads.yeastgenome.org/sequence/S288C_reference/"
@@ -392,6 +429,9 @@ def _download_yeast(species_dir: Path) -> None:
 
     # 4. Pre-compute backgrounds
     _compute_backgrounds(species_dir, sequences)
+
+    # 5. Create expression data (hardcoded rich-media estimates)
+    _create_yeast_expression(species_dir)
 
     logger.info("Yeast download complete. Files in %s", species_dir)
 
@@ -791,6 +831,9 @@ def _download_human(species_dir: Path) -> None:
     # 4. Pre-compute backgrounds
     _compute_backgrounds(species_dir, sequences)
 
+    # 5. Download GTEx expression data
+    _download_human_expression(species_dir)
+
     logger.info("Human download complete. Files in %s", species_dir)
 
 
@@ -1037,3 +1080,145 @@ def _download_human_trna(species_dir: Path) -> None:
     df = pd.DataFrame(rows)
     df.to_csv(trna_path, sep="\t", index=False)
     logger.info("Saved human tRNA copy numbers to %s", trna_path)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Expression data
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _create_yeast_expression(species_dir: Path) -> None:
+    """Create yeast expression estimates for rich media (YPD).
+
+    Assigns approximate TPM values from published literature:
+    - RPL*/RPS* ribosomal proteins → 3000 TPM
+    - Known highly-expressed genes → specific values from YEAST_HIGH_EXPRESSION
+    - Other Verified/Uncharacterized → 15 TPM (median gene)
+    - Dubious ORFs → 0.5 TPM
+    - Mitochondrial (Q0*) → 50 TPM
+
+    Saves: expression_rich_media.tsv (systematic_name, common_name, tpm)
+    """
+    expr_path = species_dir / "expression_rich_media.tsv"
+
+    gene_map = pd.read_csv(species_dir / "gene_id_map.tsv", sep="\t")
+    rows = []
+
+    for _, row in gene_map.iterrows():
+        sys_name = row["systematic_name"]
+        common = row["common_name"]
+        status = row.get("status", "Verified")
+
+        # Determine TPM
+        if common in YEAST_HIGH_EXPRESSION:
+            tpm = YEAST_HIGH_EXPRESSION[common]
+        elif isinstance(common, str) and (
+            common.startswith("RPL") or common.startswith("RPS")
+        ):
+            tpm = 3000.0
+        elif isinstance(sys_name, str) and sys_name.startswith("Q0"):
+            tpm = 50.0
+        elif status == "Dubious":
+            tpm = 0.5
+        else:
+            tpm = 15.0
+
+        rows.append({
+            "systematic_name": sys_name,
+            "common_name": common,
+            "tpm": tpm,
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(expr_path, sep="\t", index=False)
+    logger.info(
+        "Created yeast expression estimates: %d genes, "
+        "mean TPM %.1f, saved to %s",
+        len(df), df["tpm"].mean(), expr_path,
+    )
+
+
+def _download_human_expression(species_dir: Path) -> None:
+    """Download GTEx v8 median TPM per tissue.
+
+    Downloads the gene-level median TPM GCT file from the GTEx portal,
+    parses it, strips Ensembl gene version suffixes, and saves as a
+    compressed TSV.
+
+    Saves: expression_gtex.tsv.gz (ensembl_gene, symbol, <tissue_columns...>)
+    """
+    expr_path = species_dir / "expression_gtex.tsv.gz"
+
+    logger.info("Downloading GTEx v8 median TPM data...")
+    try:
+        resp = requests.get(GTEX_MEDIAN_TPM_URL, timeout=300, stream=True)
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning(
+            "GTEx download failed (%s). Mode 2 will not be available "
+            "for human without expression data.", exc
+        )
+        return
+
+    # GCT format: line 1 = #1.2, line 2 = dimensions, line 3+ = data
+    raw = gzip.decompress(resp.content).decode("utf-8")
+    lines = raw.split("\n")
+
+    # Skip first 2 header lines (#1.2 and dimensions)
+    header_line = lines[2]  # column names
+    data_lines = lines[3:]
+
+    cols = header_line.split("\t")
+    # cols[0] = "Name" (ENSG with version), cols[1] = "Description" (symbol)
+    # cols[2:] = tissue names
+
+    rows = []
+    for line in data_lines:
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        ensg_versioned = parts[0]
+        symbol = parts[1]
+        # Strip version suffix: ENSG00000000003.15 → ENSG00000000003
+        ensg = ensg_versioned.split(".")[0]
+        tpm_values = parts[2:]
+        rows.append([ensg, symbol] + tpm_values)
+
+    tissue_names = cols[2:]
+    out_cols = ["ensembl_gene", "symbol"] + tissue_names
+
+    df = pd.DataFrame(rows, columns=out_cols)
+
+    # Convert TPM columns to float
+    for col in tissue_names:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    df.to_csv(expr_path, sep="\t", index=False, compression="gzip")
+    logger.info(
+        "Saved GTEx expression: %d genes × %d tissues to %s",
+        len(df), len(tissue_names), expr_path,
+    )
+
+
+def download_expression(
+    species: str,
+    data_dir: str | Path | None = None,
+) -> Path:
+    """Download/create expression data for a species (standalone).
+
+    Can be called independently of the full download pipeline.
+    """
+    species = species.lower()
+    base = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+    species_dir = base / species
+    species_dir.mkdir(parents=True, exist_ok=True)
+
+    if species == "yeast":
+        _create_yeast_expression(species_dir)
+    elif species == "human":
+        _download_human_expression(species_dir)
+    else:
+        raise ValueError(f"Unsupported species for expression: {species!r}")
+
+    return species_dir

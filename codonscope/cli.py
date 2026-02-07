@@ -148,6 +148,50 @@ def main(argv: list[str] | None = None) -> int:
         help="Override default data directory",
     )
 
+    # ── demand (Mode 2) ──────────────────────────────────────────────────
+    dem_parser = subparsers.add_parser(
+        "demand", help="Mode 2: Translational demand (expression-weighted)"
+    )
+    dem_parser.add_argument(
+        "--species", required=True, help="Species name (e.g. yeast, human)"
+    )
+    dem_parser.add_argument(
+        "--genes", required=True,
+        help="Path to gene list file (one ID per line, or comma-separated)",
+    )
+    dem_parser.add_argument(
+        "--kmer", type=int, default=1, choices=[1, 2, 3],
+        help="K-mer size: 1=monocodon, 2=dicodon, 3=tricodon (default: 1)",
+    )
+    dem_parser.add_argument(
+        "--tissue", type=str, default=None,
+        help="GTEx tissue name for human (default: first available)",
+    )
+    dem_parser.add_argument(
+        "--expression", type=str, default=None,
+        help="Path to custom expression file (TSV with gene_id, tpm columns)",
+    )
+    dem_parser.add_argument(
+        "--top-n", type=int, default=None,
+        help="Only use top-N expressed genes in background (default: all)",
+    )
+    dem_parser.add_argument(
+        "--n-bootstrap", type=int, default=10000,
+        help="Number of bootstrap iterations (default: 10000)",
+    )
+    dem_parser.add_argument(
+        "--output-dir", type=str, default="./codonscope_output",
+        help="Output directory (default: ./codonscope_output)",
+    )
+    dem_parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed for reproducibility",
+    )
+    dem_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory",
+    )
+
     # ── disentangle (Mode 5) ──────────────────────────────────────────────
     dis_parser = subparsers.add_parser(
         "disentangle", help="Mode 5: AA vs codon disentanglement"
@@ -197,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_profile(args)
     elif args.command == "collision":
         return _cmd_collision(args)
+    elif args.command == "demand":
+        return _cmd_demand(args)
     elif args.command == "disentangle":
         return _cmd_disentangle(args)
     else:
@@ -290,6 +336,80 @@ def _cmd_composition(args: argparse.Namespace) -> int:
             for _, row in depleted.iterrows():
                 print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
                       f"obs={row['observed_freq']:.4f}  exp={row['expected_freq']:.4f}  "
+                      f"adj_p={row['adjusted_p']:.2e}")
+
+    if args.output_dir:
+        print(f"\nOutput files written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_demand(args: argparse.Namespace) -> int:
+    """Handle the demand subcommand."""
+    from codonscope.modes.mode2_demand import run_demand
+
+    gene_ids = _parse_gene_list(args.genes)
+    if not gene_ids:
+        logging.error("No gene IDs found in %s", args.genes)
+        return 1
+
+    k = args.kmer
+    print("CodonScope Mode 2: Translational Demand")
+    print(f"  Species: {args.species}")
+    print(f"  Genes: {len(gene_ids)} IDs from {args.genes}")
+    print(f"  K-mer: {k} ({'mono' if k == 1 else 'di' if k == 2 else 'tri'}codon)")
+    if args.tissue:
+        print(f"  Tissue: {args.tissue}")
+    if args.top_n:
+        print(f"  Top-N background: {args.top_n}")
+    print()
+
+    result = run_demand(
+        species=args.species,
+        gene_ids=gene_ids,
+        k=k,
+        tissue=args.tissue,
+        expression_file=args.expression,
+        top_n=args.top_n,
+        n_bootstrap=args.n_bootstrap,
+        seed=args.seed,
+        output_dir=args.output_dir,
+        data_dir=args.data_dir,
+    )
+
+    df = result["results"]
+    top = result["top_genes"]
+
+    print(f"Genes analyzed: {result['n_genes']}")
+    print(f"Expression data: {result['tissue']}")
+
+    # Top demand-contributing genes
+    print(f"\nTop demand-contributing genes:")
+    for _, row in top.head(10).iterrows():
+        print(f"  {row['gene']:>15s}  TPM={row['tpm']:8.1f}  "
+              f"codons={row['n_codons']:5d}  "
+              f"demand={row['demand_fraction']*100:5.1f}%")
+
+    # Significant k-mers
+    sig = df[df["adjusted_p"] < 0.05]
+    print(f"\nSignificant k-mers (adj_p < 0.05): {len(sig)}")
+
+    if len(sig) > 0:
+        print(f"\nTop demand-enriched:")
+        enriched = sig[sig["z_score"] > 0].head(10)
+        for _, row in enriched.iterrows():
+            print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
+                  f"demand={row['demand_geneset']:.4f}  "
+                  f"genome={row['demand_genome']:.4f}  "
+                  f"adj_p={row['adjusted_p']:.2e}")
+
+        depleted = sig[sig["z_score"] < 0].head(10)
+        if len(depleted) > 0:
+            print(f"\nTop demand-depleted:")
+            for _, row in depleted.iterrows():
+                print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
+                      f"demand={row['demand_geneset']:.4f}  "
+                      f"genome={row['demand_genome']:.4f}  "
                       f"adj_p={row['adjusted_p']:.2e}")
 
     if args.output_dir:
