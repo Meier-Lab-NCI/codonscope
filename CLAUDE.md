@@ -13,8 +13,8 @@ Building in chunks. See below for what exists and what's next.
 ### Chunk order
 1. **Data layer + yeast** ✅ DONE
 2. Core counting engine + statistics ✅ DONE
-3. Mode 1 (composition) + CLI ← NEXT
-4. Mode 5 (AA vs codon disentanglement)
+3. Mode 1 (composition) + CLI ✅ DONE
+4. Mode 5 (AA vs codon disentanglement) ← NEXT
 5. Mode 3 (optimality profile) + Mode 4 (collision potential)
 6. Mode 2 (translational demand)
 7. Mode 6 (cross-species comparison)
@@ -29,6 +29,10 @@ Building in chunks. See below for what exists and what's next.
 - [x] Chunk 2: Statistics engine (52 total tests passing)
   - `codonscope/core/statistics.py` — bootstrap Z-scores, BH correction, Cohen's d, power warnings, KS diagnostics, full pipeline
   - `tests/test_statistics.py` — 29 tests incl. yeast positive controls
+- [x] Chunk 3: Mode 1 (composition) + CLI (71 total tests passing)
+  - `codonscope/modes/mode1_composition.py` — run_composition() with matched background, diagnostics, plots
+  - `codonscope/cli.py` — argparse CLI with download + composition subcommands
+  - `tests/test_mode1.py` — 19 tests incl. ribosomal protein positive controls
 
 ## Architecture
 
