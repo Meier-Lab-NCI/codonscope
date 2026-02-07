@@ -192,6 +192,77 @@ def main(argv: list[str] | None = None) -> int:
         help="Override default data directory",
     )
 
+    # ── report (HTML) ──────────────────────────────────────────────────────
+    rep_parser = subparsers.add_parser(
+        "report", help="Generate comprehensive HTML report"
+    )
+    rep_parser.add_argument(
+        "--species", required=True, help="Primary species (e.g. yeast, human)"
+    )
+    rep_parser.add_argument(
+        "--genes", required=True,
+        help="Path to gene list file (one ID per line, or comma-separated)",
+    )
+    rep_parser.add_argument(
+        "--output", type=str, default="report.html",
+        help="Output HTML file path (default: report.html)",
+    )
+    rep_parser.add_argument(
+        "--species2", type=str, default=None,
+        help="Second species for cross-species comparison (Mode 6)",
+    )
+    rep_parser.add_argument(
+        "--tissue", type=str, default=None,
+        help="GTEx tissue for human demand analysis (Mode 2)",
+    )
+    rep_parser.add_argument(
+        "--n-bootstrap", type=int, default=10000,
+        help="Number of bootstrap iterations (default: 10000)",
+    )
+    rep_parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed for reproducibility",
+    )
+    rep_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory",
+    )
+
+    # ── compare (Mode 6) ──────────────────────────────────────────────────
+    cmp_parser = subparsers.add_parser(
+        "compare", help="Mode 6: Cross-species comparison"
+    )
+    cmp_parser.add_argument(
+        "--species1", required=True, help="First species (e.g. yeast)"
+    )
+    cmp_parser.add_argument(
+        "--species2", required=True, help="Second species (e.g. human)"
+    )
+    cmp_parser.add_argument(
+        "--genes", required=True,
+        help="Path to gene list file (one ID per line, or comma-separated)",
+    )
+    cmp_parser.add_argument(
+        "--from-species", type=str, default=None,
+        help="Which species the gene IDs belong to (default: species1)",
+    )
+    cmp_parser.add_argument(
+        "--n-bootstrap", type=int, default=10000,
+        help="Number of bootstrap iterations (default: 10000)",
+    )
+    cmp_parser.add_argument(
+        "--output-dir", type=str, default="./codonscope_output",
+        help="Output directory (default: ./codonscope_output)",
+    )
+    cmp_parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed for reproducibility",
+    )
+    cmp_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory",
+    )
+
     # ── disentangle (Mode 5) ──────────────────────────────────────────────
     dis_parser = subparsers.add_parser(
         "disentangle", help="Mode 5: AA vs codon disentanglement"
@@ -235,6 +306,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "download":
         return _cmd_download(args)
+    elif args.command == "report":
+        return _cmd_report(args)
     elif args.command == "composition":
         return _cmd_composition(args)
     elif args.command == "profile":
@@ -243,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_collision(args)
     elif args.command == "demand":
         return _cmd_demand(args)
+    elif args.command == "compare":
+        return _cmd_compare(args)
     elif args.command == "disentangle":
         return _cmd_disentangle(args)
     else:
@@ -265,6 +340,39 @@ def _cmd_download(args: argparse.Namespace) -> int:
         except Exception as exc:
             logging.error("Download failed for %s: %s", species, exc)
             return 1
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    """Handle the report subcommand."""
+    from codonscope.report import generate_report
+
+    gene_ids = _parse_gene_list(args.genes)
+    if not gene_ids:
+        logging.error("No gene IDs found in %s", args.genes)
+        return 1
+
+    print("CodonScope: Generating comprehensive HTML report")
+    print(f"  Species: {args.species}")
+    print(f"  Genes: {len(gene_ids)} IDs from {args.genes}")
+    if args.species2:
+        print(f"  Cross-species: {args.species2}")
+    if args.tissue:
+        print(f"  Tissue: {args.tissue}")
+    print()
+
+    output = generate_report(
+        species=args.species,
+        gene_ids=gene_ids,
+        output=args.output,
+        species2=args.species2,
+        tissue=args.tissue,
+        n_bootstrap=args.n_bootstrap,
+        seed=args.seed,
+        data_dir=args.data_dir,
+    )
+
+    print(f"Report written to {output}")
     return 0
 
 
@@ -514,6 +622,68 @@ def _cmd_collision(args: argparse.Namespace) -> int:
     print(f"FS/SF ratio — gene set: {result['fs_sf_ratio_geneset']:.3f}  "
           f"genome: {result['fs_sf_ratio_genome']:.3f}")
     print(f"Chi-squared: {result['chi2_stat']:.2f}  p={result['chi2_p']:.2e}")
+
+    if args.output_dir:
+        print(f"\nOutput files written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    """Handle the compare subcommand."""
+    from codonscope.modes.mode6_compare import run_compare
+
+    gene_ids = _parse_gene_list(args.genes)
+    if not gene_ids:
+        logging.error("No gene IDs found in %s", args.genes)
+        return 1
+
+    from_species = args.from_species or args.species1
+    print("CodonScope Mode 6: Cross-Species Comparison")
+    print(f"  Species: {args.species1} vs {args.species2}")
+    print(f"  Genes: {len(gene_ids)} IDs from {args.genes} ({from_species})")
+    print()
+
+    result = run_compare(
+        species1=args.species1,
+        species2=args.species2,
+        gene_ids=gene_ids,
+        from_species=from_species,
+        n_bootstrap=args.n_bootstrap,
+        seed=args.seed,
+        output_dir=args.output_dir,
+        data_dir=args.data_dir,
+    )
+
+    summary = result["summary"]
+    print(f"Ortholog pairs analyzed: {result['n_orthologs']}")
+    print(f"Genome ortholog pairs: {result['n_genome_orthologs']}")
+
+    print(f"\nRSCU correlation summary:")
+    print(f"  Gene set:  mean r = {summary['geneset_mean_r']:.4f}  "
+          f"median = {summary['geneset_median_r']:.4f}  "
+          f"std = {summary['geneset_std_r']:.4f}")
+    print(f"  Genome:    mean r = {summary['genome_mean_r']:.4f}  "
+          f"median = {summary['genome_median_r']:.4f}  "
+          f"std = {summary['genome_std_r']:.4f}")
+    print(f"  Z-score: {summary['z_score']:+.2f}  p = {summary['p_value']:.2e}")
+
+    # Top conserved and divergent
+    pg = result["per_gene"]
+    from_col = f"{result['from_species']}_gene"
+    to_col = f"{result['to_species']}_gene"
+
+    print(f"\nMost conserved (highest RSCU r):")
+    top = pg.nlargest(5, "rscu_correlation")
+    for _, row in top.iterrows():
+        print(f"  {row[from_col]:>15s} ↔ {row[to_col]:<15s}  "
+              f"r = {row['rscu_correlation']:.4f}")
+
+    print(f"\nMost divergent (lowest RSCU r):")
+    bot = pg.nsmallest(5, "rscu_correlation")
+    for _, row in bot.iterrows():
+        print(f"  {row[from_col]:>15s} ↔ {row[to_col]:<15s}  "
+              f"r = {row['rscu_correlation']:.4f}")
 
     if args.output_dir:
         print(f"\nOutput files written to {args.output_dir}/")

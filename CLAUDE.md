@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**215 tests passing. 14 commits on main.**
+**269 tests passing. 14 commits on main.**
 
 ### Build progress
 
@@ -21,8 +21,8 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 5 | Mode 5 (AA vs codon disentanglement) | ✅ Done |
 | 6 | Mode 3 (optimality profile) + Mode 4 (collision potential) | ✅ Done |
 | 7 | Mode 2 (translational demand) | ✅ Done |
-| 8 | Mode 6 (cross-species comparison) | ← Next |
-| 9 | HTML report generation | Planned |
+| 8 | Mode 6 (cross-species comparison) | ✅ Done |
+| 9 | HTML report generation | ✅ Done |
 
 ### What exists (files and what they do)
 
@@ -32,9 +32,10 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Resolves yeast (systematic name, common name) and human (HGNC symbol, ENSG, ENST, Entrez ID) gene identifiers. `get_sequences()` accepts IDMapping, dict, or list[str].
 - `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline
 - `codonscope/core/optimality.py` — `OptimalityScorer` class: loads wobble_rules.tsv, computes per-codon tAI and wtAI weights (normalised 0–1, pseudocount for zero-copy anticodons). Provides `gene_tai()`, `gene_wtai()`, `per_position_scores()`, `smooth_profile()`, `classify_codons()` (fast/slow by median threshold).
+- `codonscope/core/orthologs.py` — `OrthologDB` class: bidirectional gene mapping between species. Loads TSV from `~/.codonscope/data/orthologs/`. `map_genes()`, `get_all_pairs()`, `n_pairs`.
 
 **Data layer:**
-- `codonscope/data/download.py` — `download("yeast")` and `download("human")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds, creates expression data. Curated wobble rule tables for both species. Also: `download_expression()` standalone, yeast expression from hardcoded rich-media estimates, human expression from GTEx v8 median TPM.
+- `codonscope/data/download.py` — `download("yeast")` and `download("human")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds, creates expression data. Curated wobble rule tables for both species. Also: `download_expression()` standalone, `download_orthologs()` for cross-species ortholog mapping. Yeast expression from hardcoded rich-media estimates, human expression from GTEx v8 median TPM.
 
 **Analysis modes:**
 - `codonscope/modes/mode1_composition.py` — `run_composition()` with "all" or "matched" (length+GC) backgrounds, KS diagnostics, volcano + bar chart plots. Accepts k=1/2/3 (aliases: `kmer`, `kmer_size`).
@@ -42,11 +43,15 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/modes/mode4_collision.py` — `run_collision()` ribosome collision potential. Classifies codons as fast/slow via wtAI median threshold, counts FF/FS/SF/SS dicodon transitions. Reports FS enrichment ratio, FS/SF ratio, chi-squared test vs genome. Per-gene FS fractions and positional FS clustering. Two-panel plot (transition bars + positional FS).
 - `codonscope/modes/mode2_demand.py` — `run_demand()` translational demand analysis. Weights codon frequencies by TPM × n_codons. Weighted bootstrap Z-scores. Reports top demand-contributing genes. Supports yeast (rich-media expression) and human (GTEx tissue-specific). Options: --tissue, --expression (custom), --top-n.
 - `codonscope/modes/mode5_disentangle.py` — `run_disentangle()` with two-layer decomposition (AA composition + RSCU), attribution (AA-driven / synonymous-driven / both), synonymous driver classification (tRNA supply, GC3 bias, wobble avoidance), two-panel plot.
+- `codonscope/modes/mode6_compare.py` — `run_compare()` cross-species comparison. Per-gene RSCU correlation between ortholog pairs. Gene-set vs genome-wide correlation distribution. Bootstrap Z-test + Mann-Whitney U. Divergent gene analysis (different preferred codons tracking tRNA pool differences). Scatter data per amino acid. Two-panel plot (correlation histogram + ranked bar chart).
+
+**Report:**
+- `codonscope/report.py` — `generate_report()` HTML report generator. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6) and produces a single self-contained HTML file with inline CSS and base64-embedded matplotlib plots. Includes gene summary, volcano plots, attribution table, metagene profile, collision bars, demand analysis, cross-species correlation.
 
 **CLI:**
-- `codonscope/cli.py` — argparse with subcommands: `download`, `composition`, `demand`, `profile`, `collision`, `disentangle`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
+- `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `composition`, `demand`, `profile`, `collision`, `disentangle`, `compare`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
 
-**Tests (215 passing):**
+**Tests (269 passing):**
 - `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds
 - `tests/test_statistics.py` — 29 tests: bootstrap, BH correction, Cohen's d, KS diagnostics, yeast positive controls (RP genes, YEF3)
 - `tests/test_mode1.py` — 19 tests: gene list parsing, composition pipeline, matched background, diagnostics, CLI, RP positive controls
@@ -55,6 +60,8 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `tests/test_mode4.py` — 22 tests: transition counting (FF/FS/SF/SS), proportions, FS enrichment, chi-squared, yeast RP integration (low collision, high FF), Gcn4 comparison, CLI
 - `tests/test_mode2.py` — 36 tests: demand vector unit tests, expression loading (yeast + human GTEx), weighted bootstrap, yeast RP demand (optimal codons enriched), Gcn4 demand, human liver demand, CLI
 - `tests/test_mode5.py` — 27 tests: codon table, AA frequencies, RSCU, attribution logic, summary, Gcn4 + RP integration tests, CLI
+- `tests/test_mode6.py` — 36 tests: OrthologDB (7 unit tests), RSCU correlation (4 tests), ortholog download (6 tests), RP comparison yeast→human (10 tests), RP comparison human→yeast (4 tests), divergent analysis, output files, CLI
+- `tests/test_report.py` — 18 tests: HTML report generation (RP + Gcn4 gene sets), all mode sections present, embedded base64 images, gene summary, unmapped genes, cross-species report, CLI, self-contained HTML, inline CSS, output directory creation
 
 ### Species data (in `~/.codonscope/data/species/`)
 
@@ -72,11 +79,18 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - Expression: GTEx v8 median TPM per tissue (`expression_gtex.tsv.gz`), ~56K genes × 54 tissues
 - Same file structure as yeast plus `expression_gtex.tsv.gz`
 
+**Orthologs (in `~/.codonscope/data/orthologs/`):**
+- `human_yeast.tsv` — 830 one-to-one ortholog pairs (human ENSG → yeast systematic name)
+- Built via name matching + curated renames (~150 entries including RP paralog mapping: human RPL11 → yeast RPL11A)
+- BioMart query included but currently fails (filter name changed); name-matching fallback works well
+- 64/132 yeast RP genes have human orthologs mapped
+
 ### Positive controls (verified)
 
 - **Yeast Gcn4 targets (~59 mapped genes):** AGA-GAA dicodon Z=3.66 (all bg), Z=4.33 (matched bg, adj_p=9.6e-4). Top dicodon enrichment is GGT-containing (glycine). Mode 5 confirms Gly AA is enriched (AA-driven signal). Mode 4 shows FS transitions present.
 - **Yeast ribosomal proteins (~114 mapped genes):** Strong monocodon and dicodon bias. Mode 5 confirms synonymous-driven RSCU deviations (translational selection). Mode 3 shows high optimality throughout with visible ramp. Mode 4 shows high FF proportion and low FS enrichment (≤1.1). Mode 2 shows optimal codons (AAG, AGA, GCT) enriched in demand vs genome; rare codons (AGT, CTG, ATA) depleted. Z-scores moderate (~1.7) because RP genes dominate ~72% of genome demand.
 - **Human ribosomal proteins (14 genes):** Mode 1 monocodon shows significant codon bias.
+- **Cross-species RP orthologs:** Low RSCU correlation (mean r~0.13) between yeast and human RP genes, confirming different preferred codons (17/18 AAs have different preferred codons). Both directions work (yeast→human and human→yeast).
 
 ### Known issues
 
@@ -86,8 +100,8 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 4. **Dicodon background files are large.** Human di background is ~280MB (19K genes × 3,721 dicodons × float32). Consider sparse storage if disk space is a concern.
 5. **Mode 5 synonymous driver classification is heuristic.** Uses simple rules (Watson-Crick + enriched → wobble avoidance, high tRNA copies + enriched → tRNA supply). A more rigorous approach would use per-family regression.
 6. **Yeast expression is approximate.** Hardcoded TPM estimates, not measured. RP genes assigned uniform 3000 TPM (real values vary by paralog). RP genes end up as ~72% of genome demand; real fraction is ~30-40%. This makes Mode 2 Z-scores modest for RP genes since they dominate both gene-set and genome demand. GTEx human expression is real measured data.
-7. **No ortholog data yet.** Mode 6 (cross-species comparison) requires Ensembl Compara. Not downloaded.
-8. **`orthologs.py` not yet created.** Needed for Mode 6.
+7. **Ortholog mapping is name-based.** BioMart query fails (Ensembl filter name changed). Using gene name matching + 150 curated renames instead. Covers 830 human-yeast pairs. True Ensembl Compara orthologs would give better coverage (~1200+ pairs). Fix BioMart XML query when possible.
+8. **RP paralog mapping is approximate.** Human RPL11 maps to yeast RPL11A (not RPL11B). In reality both paralogs are near-identical. The A-paralog convention is consistent but arbitrary.
 
 ## Design decisions (read before coding)
 
@@ -100,6 +114,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 7. **IDMapping class.** `resolve_ids()` returns an `IDMapping` object that behaves like `dict[input_id → systematic_name]`. Has `.unmapped`, `.n_mapped`, `.n_unmapped`. Backwards compat: `result["mapping"]` etc. still works.
 8. **Species-dispatched ID resolution.** Yeast uses regex for systematic names + case-insensitive common name lookup. Human uses ENSG/ENST regex, numeric Entrez lookup, and case-insensitive HGNC symbol lookup.
 9. **Mode 2 demand weighting.** Weight = TPM × n_codons per gene. Demand vector = weighted mean of per-gene codon frequencies. Weighted bootstrap: sample N genes, compute their weighted demand, repeat 10K times. Human uses GTEx tissue-specific TPM. Yeast uses hardcoded rich-media estimates.
+10. **Mode 6 RSCU correlation.** Per-gene RSCU computed for ortholog pairs. Pearson r uses only multi-synonym codons (excludes Met, Trp). Gene-set distribution compared to genome-wide via bootstrap Z-test and Mann-Whitney U. Divergent genes analysed for different preferred codons. Ortholog data stored separately in `~/.codonscope/data/orthologs/`.
 
 ## How to run
 
@@ -126,6 +141,15 @@ python3 -m codonscope.cli collision --species yeast --genes genelist.txt
 
 # Mode 5: Disentanglement
 python3 -m codonscope.cli disentangle --species yeast --genes genelist.txt
+
+# Mode 6: Cross-species comparison
+python3 -c "from codonscope.data.download import download_orthologs; download_orthologs('human', 'yeast')"
+python3 -m codonscope.cli compare --species1 yeast --species2 human --genes genelist.txt
+python3 -m codonscope.cli compare --species1 yeast --species2 human --genes genelist.txt --from-species human
+
+# Comprehensive HTML report (runs all modes)
+python3 -m codonscope.cli report --species yeast --genes genelist.txt --output report.html
+python3 -m codonscope.cli report --species yeast --genes genelist.txt --species2 human --output report.html
 ```
 
 ## Key dependencies

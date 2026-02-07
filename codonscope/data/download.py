@@ -1222,3 +1222,357 @@ def download_expression(
         raise ValueError(f"Unsupported species for expression: {species!r}")
 
     return species_dir
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ortholog download
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BIOMART_URL = "https://www.ensembl.org/biomart/martservice"
+
+# BioMart XML query for human-yeast one-to-one orthologs
+BIOMART_HUMAN_YEAST_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE Query>
+<Query virtualSchemaName="default" formatter="TSV" header="1"
+       uniqueRows="1" count="" datasetConfigVersion="0.6">
+  <Dataset name="hsapiens_gene_ensembl" interface="default">
+    <Filter name="with_scerevisiae_homolog" excluded="0"/>
+    <Filter name="homolog_scerevisiae_orthology_type" value="ortholog_one2one"/>
+    <Attribute name="ensembl_gene_id"/>
+    <Attribute name="external_gene_name"/>
+    <Attribute name="scerevisiae_homolog_ensembl_gene"/>
+    <Attribute name="scerevisiae_homolog_associated_gene_name"/>
+    <Attribute name="scerevisiae_homolog_orthology_type"/>
+  </Dataset>
+</Query>"""
+
+# Curated human→yeast gene name mappings for genes whose names differ
+# between species.  Only well-established ortholog pairs.
+HUMAN_YEAST_CURATED_RENAMES: dict[str, str] = {
+    # Glycolysis / gluconeogenesis
+    "GAPDH": "TDH3", "GAPDHS": "TDH3",
+    "ENO1": "ENO2", "ENO2": "ENO1",  # note: swap
+    "PKM": "PYK1", "PKLR": "PYK1",
+    "ALDOA": "FBA1", "ALDOB": "FBA1", "ALDOC": "FBA1",
+    "PGK1": "PGK1",
+    "TPI1": "TPI1",
+    "GPI": "PGI1",
+    "PFKM": "PFK1", "PFKL": "PFK1", "PFKP": "PFK1",
+    "HK1": "HXK2", "HK2": "HXK2",
+    "PGAM1": "GPM1", "PGAM2": "GPM1",
+    "LDHA": "DLD1", "LDHB": "DLD1",
+    # Translation factors
+    "EEF1A1": "TEF1", "EEF1A2": "TEF2",
+    "EEF2": "EFT1",
+    "EIF4A1": "TIF1", "EIF4A2": "TIF1",
+    "EIF2S1": "SUI2", "EIF2S2": "SUI3", "EIF2S3": "GCD11",
+    "EIF3A": "RPG1", "EIF5B": "FUN12",
+    "ETF1": "SUP45", "GSPT1": "SUP35",
+    "ABCF1": "GCN20",
+    # Ribosomal proteins — yeast has A/B paralogs, human has single genes
+    "RPSA": "RPS0A", "RPS0": "RPS0A",
+    "FAU": "RPS30A",
+    "UBA52": "RPL40A", "UBA80": "RPL40A",
+    "RPS27A": "RPS31",
+    "RACK1": "ASC1",
+    # RPL — human → yeast (map to A paralog by convention)
+    "RPL4": "RPL4A", "RPL6": "RPL6A", "RPL7": "RPL7A", "RPL8": "RPL8A",
+    "RPL9": "RPL9A",
+    "RPL11": "RPL11A", "RPL12": "RPL12A", "RPL13": "RPL13A",
+    "RPL14": "RPL14A", "RPL15": "RPL15A",
+    "RPL17": "RPL17A", "RPL18": "RPL18A",
+    "RPL19": "RPL19A", "RPL21": "RPL21A", "RPL22": "RPL22A",
+    "RPL23": "RPL23A", "RPL24": "RPL24A",
+    "RPL26": "RPL26A", "RPL27": "RPL27A",
+    "RPL31": "RPL31A",
+    "RPL34": "RPL34A", "RPL35": "RPL35A", "RPL36": "RPL36A",
+    "RPL37": "RPL37A", "RPL41": "RPL41A",
+    "RPL1": "RPL1A", "RPL2": "RPL2A",
+    "RPL16": "RPL16A", "RPL20": "RPL20A", "RPL33": "RPL33A",
+    # RPS — human → yeast
+    "RPS6": "RPS6A", "RPS7": "RPS7A", "RPS8": "RPS8A", "RPS9": "RPS9A",
+    "RPS10": "RPS10A", "RPS11": "RPS11A",
+    "RPS14": "RPS14A", "RPS16": "RPS16A", "RPS17": "RPS17A",
+    "RPS18": "RPS18A", "RPS19": "RPS19A",
+    "RPS21": "RPS21A", "RPS23": "RPS23A", "RPS24": "RPS24A",
+    "RPS25": "RPS25A", "RPS26": "RPS26A",
+    "RPS28": "RPS28A", "RPS29": "RPS29A",
+    "RPS1": "RPS1A", "RPS4": "RPS4A", "RPS22": "RPS22A",
+    "RPS27": "RPS27A",
+    # Chaperones
+    "HSPA5": "KAR2", "HSPA8": "SSA1", "HSPA1A": "SSA1",
+    "HSP90AA1": "HSC82", "HSP90AB1": "HSP82",
+    "HSP90B1": "HSP82",
+    "HSPD1": "HSP60", "HSPE1": "HSP10",
+    "CCT2": "CCT2", "CCT3": "CCT3", "CCT4": "CCT4",
+    "CCT5": "CCT5", "CCT6A": "CCT6", "CCT7": "CCT7", "CCT8": "CCT8",
+    "TCP1": "CCT1",
+    # TCA cycle
+    "CS": "CIT1",
+    "ACO1": "ACO1", "ACO2": "ACO1",
+    "IDH1": "IDP1", "IDH2": "IDP1",
+    "OGDH": "KGD1",
+    "DLST": "KGD2",
+    "SDHA": "SDH1", "SDHB": "SDH2", "SDHC": "SDH3", "SDHD": "SDH4",
+    "FH": "FUM1",
+    "MDH1": "MDH1", "MDH2": "MDH2",
+    # Amino acid biosynthesis
+    "ATF4": "GCN4",  # transcription factor (functional ortholog)
+    # Ubiquitin-proteasome
+    "UBA1": "UBA1",
+    "UBB": "UBI4", "UBC": "UBI4",
+    "PSMA1": "PRE5", "PSMA2": "PRE8", "PSMA3": "PRE9",
+    "PSMA4": "PRE6", "PSMA5": "PUP2", "PSMA6": "PRE5",
+    "PSMA7": "PRE4",
+    "PSMB1": "PRE3", "PSMB2": "PUP1", "PSMB3": "PUP3",
+    "PSMB4": "PRE1", "PSMB5": "PRE2", "PSMB6": "PRE7",
+    "PSMB7": "PRE4",
+    # RNA processing / splicing
+    "SNRPD1": "SMD1", "SNRPD2": "SMD2", "SNRPD3": "SMD3",
+    "SNRPB": "SMB1", "SNRPE": "SME1",
+    # Histones
+    "H3C1": "HHT1", "H4C1": "HHF1",
+    "H2AC1": "HTA1", "H2BC1": "HTB1",
+    # Actin / cytoskeleton
+    "ACTB": "ACT1", "ACTG1": "ACT1",
+    "TUBA1A": "TUB1", "TUBA1B": "TUB1",
+    "TUBB": "TUB2", "TUBB4B": "TUB2",
+    # Metabolism misc
+    "FASN": "FAS1",
+    "ACLY": "ACB1",
+    "HMGCR": "HMG1",
+    "IMPDH1": "IMD3", "IMPDH2": "IMD4",
+    "PRPS1": "PRS1", "PRPS2": "PRS1",
+    # Signalling / kinases
+    "CSNK2A1": "CKA1", "CSNK2A2": "CKA2", "CSNK2B": "CKB1",
+    "CDK1": "CDC28",
+    "MTOR": "TOR1",
+    "AKT1": "SCH9",
+    "AMPK": "SNF1",  # functional ortholog
+}
+
+# Gene name pairs that match by name but are NOT orthologs
+NAME_MATCH_BLOCKLIST = {
+    "ACT1",   # yeast actin — human ACTA1/ACTB handle separately
+    "SEC61A1", "SEC61B", "SEC61G",  # convergent names
+}
+
+
+def download_orthologs(
+    species1: str,
+    species2: str,
+    data_dir: str | Path | None = None,
+) -> Path:
+    """Download ortholog mapping for a species pair.
+
+    Currently supports human-yeast only.
+
+    Returns:
+        Path to the ortholog TSV file.
+    """
+    species1 = species1.lower()
+    species2 = species2.lower()
+    pair = tuple(sorted([species1, species2]))
+
+    base = Path(data_dir) if data_dir else DEFAULT_DATA_DIR.parent
+    ortho_dir = base / "orthologs"
+    ortho_dir.mkdir(parents=True, exist_ok=True)
+
+    if pair == ("human", "yeast"):
+        return _download_orthologs_human_yeast(ortho_dir, base / "species")
+    else:
+        raise ValueError(
+            f"Unsupported ortholog pair: {species1}-{species2}. "
+            "Supported: human-yeast"
+        )
+
+
+def _download_orthologs_human_yeast(
+    ortho_dir: Path,
+    species_base: Path,
+) -> Path:
+    """Download human-yeast orthologs.
+
+    Strategy:
+      1. Try BioMart for one-to-one orthologs from Ensembl Compara
+      2. Fall back to name-matching + curated renames
+    """
+    out_path = ortho_dir / "human_yeast.tsv"
+
+    # Try BioMart first
+    pairs = _try_biomart_human_yeast(species_base)
+
+    if len(pairs) < 100:
+        logger.warning(
+            "BioMart returned only %d pairs, falling back to name matching",
+            len(pairs),
+        )
+        pairs = _name_match_human_yeast(species_base)
+
+    # Write TSV
+    df = pd.DataFrame(pairs, columns=["human_gene", "yeast_gene"])
+    df = df.drop_duplicates().sort_values("human_gene").reset_index(drop=True)
+    df.to_csv(out_path, sep="\t", index=False)
+    logger.info(
+        "Ortholog mapping: %d human-yeast pairs → %s",
+        len(df), out_path,
+    )
+    return out_path
+
+
+def _try_biomart_human_yeast(species_base: Path) -> list[tuple[str, str]]:
+    """Try BioMart query for human-yeast one-to-one orthologs.
+
+    Returns list of (human_ensg, yeast_systematic_name) pairs.
+    """
+    try:
+        logger.info("Querying Ensembl BioMart for human-yeast orthologs...")
+        resp = requests.get(
+            BIOMART_URL,
+            params={"query": BIOMART_HUMAN_YEAST_XML},
+            timeout=120,
+        )
+        resp.raise_for_status()
+
+        text = resp.text.strip()
+        if not text or "ERROR" in text[:200]:
+            logger.warning("BioMart returned error: %s", text[:200])
+            return []
+
+        # Parse TSV response
+        lines = text.split("\n")
+        if len(lines) < 2:
+            return []
+
+        # Load yeast gene map for systematic name lookup
+        yeast_dir = species_base / "yeast"
+        yeast_map = _load_gene_map(yeast_dir) if yeast_dir.exists() else {}
+
+        pairs = []
+        for line in lines[1:]:  # skip header
+            parts = line.strip().split("\t")
+            if len(parts) < 4:
+                continue
+            human_ensg = parts[0].strip()
+            yeast_gene = parts[3].strip()  # associated gene name
+            yeast_ensg = parts[2].strip()
+
+            if not human_ensg or not yeast_gene:
+                continue
+
+            # Filter to one2one
+            if len(parts) >= 5 and "one2one" not in parts[4]:
+                continue
+
+            # Convert yeast common name to systematic name if possible
+            if yeast_map:
+                sys_name = yeast_map.get(yeast_gene.upper())
+                if sys_name:
+                    yeast_gene = sys_name
+
+            pairs.append((human_ensg, yeast_gene))
+
+        logger.info("BioMart returned %d ortholog pairs", len(pairs))
+        return pairs
+
+    except Exception as exc:
+        logger.warning("BioMart query failed: %s", exc)
+        return []
+
+
+def _name_match_human_yeast(species_base: Path) -> list[tuple[str, str]]:
+    """Build ortholog table by matching gene names + curated renames.
+
+    Loads gene_id_map.tsv from both species and finds matching gene names.
+    Applies curated rename mappings for well-known orthologs.
+
+    Returns list of (human_ensg, yeast_systematic_name) pairs.
+    """
+    human_dir = species_base / "human"
+    yeast_dir = species_base / "yeast"
+
+    if not human_dir.exists() or not yeast_dir.exists():
+        raise FileNotFoundError(
+            "Both human and yeast data must be downloaded before ortholog mapping. "
+            "Run: codonscope download --species human yeast"
+        )
+
+    # Load human gene map: HGNC symbol → ENSG
+    human_df = pd.read_csv(human_dir / "gene_id_map.tsv", sep="\t")
+    human_symbol_to_ensg: dict[str, str] = {}
+    for _, row in human_df.iterrows():
+        symbol = str(row["common_name"]).strip().upper()
+        ensg = str(row["systematic_name"]).strip()
+        if symbol and ensg and symbol != "NAN":
+            human_symbol_to_ensg[symbol] = ensg
+
+    # Load yeast gene map: common name → systematic name
+    yeast_df = pd.read_csv(yeast_dir / "gene_id_map.tsv", sep="\t")
+    yeast_name_to_sys: dict[str, str] = {}
+    yeast_sys_set: set[str] = set()
+    for _, row in yeast_df.iterrows():
+        sys_name = str(row["systematic_name"]).strip()
+        common = str(row["common_name"]).strip().upper()
+        yeast_sys_set.add(sys_name)
+        if common and common != "NAN" and common != sys_name:
+            yeast_name_to_sys[common] = sys_name
+        yeast_name_to_sys[sys_name.upper()] = sys_name
+
+    pairs: list[tuple[str, str]] = []
+    used_yeast: set[str] = set()
+
+    # 1. Curated renames (highest priority)
+    for human_name, yeast_name in HUMAN_YEAST_CURATED_RENAMES.items():
+        human_upper = human_name.upper()
+        yeast_upper = yeast_name.upper()
+
+        ensg = human_symbol_to_ensg.get(human_upper)
+        if not ensg:
+            continue
+
+        yeast_sys = yeast_name_to_sys.get(yeast_upper)
+        if not yeast_sys:
+            # Try as systematic name directly
+            if yeast_name in yeast_sys_set:
+                yeast_sys = yeast_name
+            else:
+                continue
+
+        if yeast_sys not in used_yeast:
+            pairs.append((ensg, yeast_sys))
+            used_yeast.add(yeast_sys)
+
+    # 2. Direct name matches (case-insensitive)
+    for human_symbol, ensg in human_symbol_to_ensg.items():
+        if human_symbol in NAME_MATCH_BLOCKLIST:
+            continue
+
+        yeast_sys = yeast_name_to_sys.get(human_symbol)
+        if yeast_sys and yeast_sys not in used_yeast:
+            pairs.append((ensg, yeast_sys))
+            used_yeast.add(yeast_sys)
+
+    logger.info(
+        "Name matching: %d pairs (%d curated + %d by name)",
+        len(pairs),
+        sum(1 for h, _ in pairs[:len(HUMAN_YEAST_CURATED_RENAMES)]),
+        len(pairs) - sum(1 for h, _ in pairs[:len(HUMAN_YEAST_CURATED_RENAMES)]),
+    )
+    return pairs
+
+
+def _load_gene_map(species_dir: Path) -> dict[str, str]:
+    """Load gene_id_map.tsv and return {upper_name: systematic_name} lookup."""
+    path = species_dir / "gene_id_map.tsv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, sep="\t")
+    lookup: dict[str, str] = {}
+    for _, row in df.iterrows():
+        sys_name = str(row["systematic_name"]).strip()
+        common = str(row.get("common_name", "")).strip()
+        lookup[sys_name.upper()] = sys_name
+        if common and common.upper() != "NAN":
+            lookup[common.upper()] = sys_name
+    return lookup
