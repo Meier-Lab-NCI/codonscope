@@ -11,8 +11,8 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 Building in chunks. See below for what exists and what's next.
 
 ### Chunk order
-1. **Data layer + yeast** ← CURRENT
-2. Core counting engine + statistics
+1. **Data layer + yeast** ✅ DONE
+2. Core counting engine + statistics ← NEXT
 3. Mode 1 (composition) + CLI
 4. Mode 5 (AA vs codon disentanglement)
 5. Mode 3 (optimality profile) + Mode 4 (collision potential)
@@ -21,7 +21,11 @@ Building in chunks. See below for what exists and what's next.
 8. HTML report generation
 
 ### What's built
-- [ ] Nothing yet — starting chunk 1
+- [x] Chunk 1: Data layer + yeast (6,685 ORFs, all 23 tests passing)
+  - `codonscope/core/codons.py` — k-mer counting (mono/di/tri), fully implemented
+  - `codonscope/core/sequences.py` — SequenceDB with ID resolution
+  - `codonscope/data/download.py` — SGD CDS, tRNA, wobble rules, backgrounds
+  - `tests/test_chunk1.py` — 23 tests
 
 ## Architecture
 
