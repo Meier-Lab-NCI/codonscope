@@ -13,8 +13,10 @@ import numpy as np
 import pandas as pd
 
 from codonscope.core.codons import (
+    CODON_TABLE,
     SENSE_CODONS,
     all_possible_kmers,
+    annotate_kmer,
     kmer_frequencies,
 )
 from codonscope.core.sequences import SequenceDB
@@ -31,6 +33,7 @@ def run_demand(
     gene_ids: list[str],
     k: int = 1,
     tissue: str | None = None,
+    cell_line: str | None = None,
     expression_file: str | Path | None = None,
     top_n: int | None = None,
     n_bootstrap: int = 10_000,
@@ -49,7 +52,8 @@ def run_demand(
         species: Species name ("yeast" or "human").
         gene_ids: Gene identifiers (any format).
         k: k-mer size (1=mono, 2=di, 3=tri).
-        tissue: GTEx tissue name for human (default: first available).
+        tissue: GTEx tissue name for human (default: cross-tissue median).
+        cell_line: CCLE cell line for human (e.g. HEK293T, HeLa, K562).
         expression_file: Path to user-supplied expression TSV
             (columns: gene_id, tpm).
         top_n: Only use top-N expressed genes in background (None = all).
@@ -88,7 +92,7 @@ def run_demand(
 
     # Load expression data
     expression, tissue_used, available_tissues = _load_expression(
-        species, species_dir, tissue=tissue,
+        species, species_dir, tissue=tissue, cell_line=cell_line,
         expression_file=expression_file,
     )
 
@@ -133,6 +137,13 @@ def run_demand(
         "z_score", key=np.abs, ascending=False,
     ).reset_index(drop=True)
 
+    # Add amino acid annotation column
+    def _kmer_to_aa(kmer: str) -> str:
+        codons = [kmer[i:i + 3] for i in range(0, len(kmer), 3)]
+        return "-".join(CODON_TABLE.get(c, "?") for c in codons)
+
+    results_df["amino_acid"] = results_df["kmer"].apply(_kmer_to_aa)
+
     # Top demand-contributing genes
     top_genes = _rank_demand_genes(
         gene_seqs, expression, kmer_names, k=k,
@@ -162,6 +173,7 @@ def _load_expression(
     species: str,
     species_dir: Path,
     tissue: str | None = None,
+    cell_line: str | None = None,
     expression_file: str | Path | None = None,
 ) -> tuple[dict[str, float], str, list[str]]:
     """Load expression data (TPM per gene).
@@ -174,8 +186,12 @@ def _load_expression(
         return _load_custom_expression(expression_file, species_dir, species)
 
     if species == "yeast":
+        if cell_line:
+            raise ValueError("Cell line expression not available for yeast.")
         return _load_yeast_expression(species_dir)
     elif species == "human":
+        if cell_line is not None:
+            return _load_ccle_expression(species_dir, cell_line)
         return _load_human_expression(species_dir, tissue=tissue)
     else:
         raise ValueError(f"No expression data for species: {species!r}")
@@ -214,9 +230,11 @@ def _load_human_expression(
     available = sorted(tissue_cols)
 
     if tissue is None:
-        # Default to first available tissue alphabetically
-        tissue = available[0]
-        logger.info("No tissue specified, using: %s", tissue)
+        # Compute cross-tissue median as general-purpose background
+        median_tpm = df[tissue_cols].median(axis=1)
+        expr = dict(zip(df["ensembl_gene"], median_tpm.astype(float)))
+        logger.info("No tissue specified, using cross-tissue median TPM.")
+        return expr, "cross_tissue_median", available
 
     # Fuzzy match tissue name (case-insensitive substring)
     tissue_lower = tissue.lower().replace("_", " ").replace("-", " ")
@@ -244,6 +262,104 @@ def _load_human_expression(
     logger.info("Using GTEx tissue: %s", matched)
     expr = dict(zip(df["ensembl_gene"], df[matched].astype(float)))
     return expr, matched, available
+
+
+def _normalize_cell_line_name(name: str) -> str:
+    """Normalize cell line name for fuzzy matching.
+
+    Strips spaces, hyphens, parentheses, colons; uppercases.
+    """
+    return (
+        name.upper()
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("(", "")
+        .replace(")", "")
+        .replace(":", "")
+    )
+
+
+def _load_ccle_expression(
+    species_dir: Path,
+    cell_line: str,
+) -> tuple[dict[str, float], str, list[str]]:
+    """Load CCLE cell line expression data.
+
+    Tries loading from expression_ccle.tsv.gz first. If not available,
+    falls back to GTEx tissue proxy using CELL_LINE_TISSUE_PROXY mapping.
+    """
+    from codonscope.data.download import CELL_LINE_TISSUE_PROXY
+
+    ccle_path = species_dir / "expression_ccle.tsv.gz"
+    norm_query = _normalize_cell_line_name(cell_line)
+
+    if ccle_path.exists():
+        df = pd.read_csv(ccle_path, sep="\t", compression="gzip")
+        data_cols = [c for c in df.columns if c not in ("ensembl_gene", "symbol")]
+
+        # Build normalized name → actual column name mapping
+        norm_to_col = {}
+        for c in data_cols:
+            norm_to_col[_normalize_cell_line_name(c)] = c
+
+        # Exact match on normalized name
+        matched = norm_to_col.get(norm_query)
+
+        # Substring match
+        if matched is None:
+            for norm_name, col_name in norm_to_col.items():
+                if norm_query in norm_name or norm_name in norm_query:
+                    matched = col_name
+                    break
+
+        if matched is not None:
+            expr = dict(zip(df["ensembl_gene"], df[matched].astype(float)))
+            logger.info("Using CCLE expression for cell line: %s", matched)
+            return expr, matched, sorted(data_cols)
+
+        # Cell line not found in CCLE data — try GTEx proxy fallback
+        logger.warning(
+            "Cell line '%s' not found in CCLE data. Checking GTEx proxy...",
+            cell_line,
+        )
+
+    # Fall back to GTEx tissue proxy
+    proxy_tissue = None
+    for proxy_name, tissue in CELL_LINE_TISSUE_PROXY.items():
+        if _normalize_cell_line_name(proxy_name) == norm_query:
+            proxy_tissue = tissue
+            break
+    # Substring match on proxy names
+    if proxy_tissue is None:
+        for proxy_name, tissue in CELL_LINE_TISSUE_PROXY.items():
+            norm_proxy = _normalize_cell_line_name(proxy_name)
+            if norm_query in norm_proxy or norm_proxy in norm_query:
+                proxy_tissue = tissue
+                break
+
+    if proxy_tissue is not None:
+        logger.warning(
+            "CCLE data not available. Using GTEx '%s' as proxy for '%s'.",
+            proxy_tissue, cell_line,
+        )
+        expr, _, available = _load_human_expression(
+            species_dir, tissue=proxy_tissue,
+        )
+        tissue_used = f"{cell_line} (proxy: {proxy_tissue})"
+        return expr, tissue_used, available
+
+    # Cell line not found anywhere
+    available_names = sorted(CELL_LINE_TISSUE_PROXY.keys())
+    if ccle_path.exists():
+        df = pd.read_csv(ccle_path, sep="\t", compression="gzip", nrows=0)
+        ccle_cols = [c for c in df.columns if c not in ("ensembl_gene", "symbol")]
+        available_names = sorted(set(available_names) | set(ccle_cols))
+
+    raise ValueError(
+        f"Cell line '{cell_line}' not found. "
+        f"Available cell lines ({len(available_names)}): "
+        f"{', '.join(available_names[:20])}..."
+    )
 
 
 def _load_custom_expression(
@@ -565,7 +681,8 @@ def _plot_demand(df: pd.DataFrame, path: Path, k: int) -> None:
     colors = ["#d73027" if z > 0 else "#4575b4" for z in plot_df["z_score"]]
     ax.barh(range(len(plot_df)), plot_df["z_score"], color=colors)
     ax.set_yticks(range(len(plot_df)))
-    ax.set_yticklabels(plot_df["kmer"], fontsize=7)
+    labels = [annotate_kmer(km, k) for km in plot_df["kmer"]]
+    ax.set_yticklabels(labels, fontsize=7)
     ax.set_xlabel("Z-score (demand-weighted)")
 
     k_label = {1: "Monocodon", 2: "Dicodon", 3: "Tricodon"}[k]

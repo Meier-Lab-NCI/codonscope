@@ -34,6 +34,7 @@ def generate_report(
     output: str | Path = "report.html",
     species2: str | None = None,
     tissue: str | None = None,
+    cell_line: str | None = None,
     n_bootstrap: int = 10_000,
     seed: int | None = None,
     data_dir: str | Path | None = None,
@@ -49,6 +50,7 @@ def generate_report(
         output: Output HTML file path.
         species2: Second species for cross-species comparison (Mode 6).
         tissue: GTEx tissue for human demand analysis (Mode 2).
+        cell_line: CCLE cell line for human demand analysis (Mode 2).
         n_bootstrap: Bootstrap iterations for all modes.
         seed: Random seed for reproducibility.
         data_dir: Override default data directory.
@@ -78,7 +80,7 @@ def generate_report(
             species=species, gene_ids=gene_ids, k=1,
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
-        sections.append(_section_mode1(mono_result, k=1))
+        sections.append(_section_mode1(mono_result, k=1, species=species, n_bootstrap=n_bootstrap))
     except Exception as exc:
         logger.warning("Mode 1 (monocodon) failed: %s", exc)
         sections.append(_section_error("Mode 1: Monocodon Composition", exc))
@@ -90,7 +92,7 @@ def generate_report(
             species=species, gene_ids=gene_ids, k=2,
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
-        sections.append(_section_mode1(di_result, k=2))
+        sections.append(_section_mode1(di_result, k=2, species=species, n_bootstrap=n_bootstrap))
     except Exception as exc:
         logger.warning("Mode 1 (dicodon) failed: %s", exc)
         sections.append(_section_error("Mode 1: Dicodon Composition", exc))
@@ -103,7 +105,7 @@ def generate_report(
             species=species, gene_ids=gene_ids,
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
-        sections.append(_section_mode5(dis_result))
+        sections.append(_section_mode5(dis_result, species=species))
     except Exception as exc:
         logger.warning("Mode 5 failed: %s", exc)
         sections.append(_section_error("Mode 5: Disentanglement", exc))
@@ -115,7 +117,7 @@ def generate_report(
         prof_result = run_profile(
             species=species, gene_ids=gene_ids, data_dir=data_dir,
         )
-        sections.append(_section_mode3(prof_result))
+        sections.append(_section_mode3(prof_result, species=species))
     except Exception as exc:
         logger.warning("Mode 3 failed: %s", exc)
         sections.append(_section_error("Mode 3: Optimality Profile", exc))
@@ -127,7 +129,7 @@ def generate_report(
         col_result = run_collision(
             species=species, gene_ids=gene_ids, data_dir=data_dir,
         )
-        sections.append(_section_mode4(col_result))
+        sections.append(_section_mode4(col_result, species=species))
     except Exception as exc:
         logger.warning("Mode 4 failed: %s", exc)
         sections.append(_section_error("Mode 4: Collision Potential", exc))
@@ -138,10 +140,10 @@ def generate_report(
         from codonscope.modes.mode2_demand import run_demand
         dem_result = run_demand(
             species=species, gene_ids=gene_ids,
-            tissue=tissue,
+            tissue=tissue, cell_line=cell_line,
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
         )
-        sections.append(_section_mode2(dem_result))
+        sections.append(_section_mode2(dem_result, species=species))
     except Exception as exc:
         logger.warning("Mode 2 failed: %s", exc)
         sections.append(_section_error("Mode 2: Translational Demand", exc))
@@ -156,7 +158,7 @@ def generate_report(
                 gene_ids=gene_ids, from_species=species,
                 n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
             )
-            sections.append(_section_mode6(cmp_result))
+            sections.append(_section_mode6(cmp_result, species=species))
         except Exception as exc:
             logger.warning("Mode 6 failed: %s", exc)
             sections.append(_section_error("Mode 6: Cross-Species Comparison", exc))
@@ -303,6 +305,18 @@ tr:hover td {
 .badge-aa { background: #fef3c7; color: #92400e; }
 .badge-syn { background: #d1fae5; color: #065f46; }
 .badge-both { background: #ede9fe; color: #5b21b6; }
+.method-note {
+    background: #f0f4ff;
+    border-left: 4px solid #6366f1;
+    border-radius: 0 6px 6px 0;
+    padding: 14px 18px;
+    margin: 18px 0;
+    font-size: 0.88em;
+    color: #334155;
+    line-height: 1.6;
+}
+.method-note p { margin: 6px 0; }
+.method-note strong { color: #1e293b; }
 """
 
 
@@ -409,7 +423,7 @@ def _section_gene_summary(
 """
 
 
-def _section_mode1(result: dict, k: int) -> str:
+def _section_mode1(result: dict, k: int, species: str = "", n_bootstrap: int = 10_000) -> str:
     """Mode 1: Composition analysis section."""
     kname = {1: "Monocodon", 2: "Dicodon", 3: "Tricodon"}[k]
     df = result["results"]
@@ -441,6 +455,79 @@ def _section_mode1(result: dict, k: int) -> str:
     top_enriched = _results_table(enriched.head(15), k)
     top_depleted = _results_table(depleted.head(15), k)
 
+    # Species-specific description
+    sp = species.lower()
+    if sp == "yeast":
+        db_desc = "6,685 verified ORFs from the Saccharomyces Genome Database (SGD)"
+        isoform_note = "Yeast keeps things simple &mdash; one ORF per gene, no isoform drama."
+    elif sp == "human":
+        db_desc = "19,229 protein-coding genes from NCBI MANE Select v1.5"
+        isoform_note = (
+            "Each gene is represented by its <strong>MANE Select</strong> transcript &mdash; "
+            "the one canonical isoform that NCBI and Ensembl actually agree on. "
+            "No double-counting from alternative splicing."
+        )
+    else:
+        db_desc = f"protein-coding genes for {escape(species)}"
+        isoform_note = "One canonical transcript per gene."
+
+    if k == 1:
+        kmer_desc = (
+            "each of the 61 sense codons (stop codons excluded, obviously)"
+        )
+        what_it_means = (
+            "If your gene set uses AAG (Lys) more than the genome average, "
+            "that codon shows up as enriched. Could be translational selection, "
+            "could be amino acid composition, could be GC bias &mdash; "
+            "Mode 5 below will help sort that out."
+        )
+    elif k == 2:
+        kmer_desc = (
+            "all 3,721 possible pairs of adjacent sense codons (dicodons). "
+            "These are counted with a sliding window &mdash; codons at positions "
+            "1-2, 2-3, 3-4, etc."
+        )
+        what_it_means = (
+            "Dicodon biases can reveal things monocodons miss, like "
+            "ribosome stalling at specific codon pairs or avoidance of "
+            "certain dinucleotides at the codon junction. "
+            "Fair warning: 3,721 tests means you need strong effects to survive "
+            "multiple-testing correction."
+        )
+    else:
+        kmer_desc = "all 226,981 sense-codon triplets (tricodons)"
+        what_it_means = (
+            "Tricodon space is enormous, so statistical power is limited. "
+            "These use analytic standard errors rather than bootstrap."
+        )
+
+    method_note = f"""
+<div class="method-note">
+<p><strong>What this is.</strong> We took your {n_genes} genes and compared their
+{kmer_desc} frequencies against all {db_desc}. {isoform_note}</p>
+<p><strong>How it works.</strong> For each gene, we compute {kname.lower()} frequencies
+(proportions, so a 300-codon gene and a 3,000-codon gene contribute equally &mdash; no
+length bias). We average those per-gene frequencies across your gene set, then ask:
+is this average unusual? To find out, we bootstrap-resample {n_bootstrap:,} random
+gene sets of the same size from the genome and build a null distribution.
+The <strong>Z-score</strong> is how many standard errors your gene set&rsquo;s mean
+is from the bootstrap mean. Positive = enriched, negative = depleted.</p>
+<p><strong>Reading the table.</strong>
+<strong>Adjusted p-value</strong> is Benjamini-Hochberg FDR-corrected across all
+{kname.lower()}s tested &mdash; it controls the expected proportion of false
+discoveries, not just the chance of one.
+<strong>Cohen&rsquo;s d</strong> is the effect size (observed &minus; expected,
+divided by the genome standard deviation). It tells you how big the difference
+is in practical terms: under 0.2 is tiny, 0.5 is medium, above 0.8 is large.
+A codon can be statistically significant but biologically trivial if d is small.</p>
+<p>{what_it_means}</p>
+<p><strong>GC content heads-up.</strong> If your gene set has different GC content
+than the genome (the diagnostics above will flag this), some codon biases may just
+reflect nucleotide composition rather than selection.
+Re-run with <code>--background matched</code> to compare against length- and
+GC-matched genes if you want to be thorough about it.</p>
+</div>"""
+
     return f"""
 <div class="section">
 <h2>Mode 1: {kname} Composition</h2>
@@ -452,11 +539,12 @@ def _section_mode1(result: dict, k: int) -> str:
 {top_enriched}
 <h3>Top Depleted ({len(depleted)} total)</h3>
 {top_depleted}
+{method_note}
 </div>
 """
 
 
-def _section_mode5(result: dict) -> str:
+def _section_mode5(result: dict, species: str = "") -> str:
     """Mode 5: Disentanglement section."""
     summary = result["summary"]
     attr_df = result["attribution"]
@@ -515,6 +603,35 @@ def _section_mode5(result: dict) -> str:
             {driver_rows}
             </table>"""
 
+    method_note = """
+<div class="method-note">
+<p><strong>The problem.</strong> Mode 1 told you <em>which</em> codons are
+biased, but not <em>why</em>. If your gene set is enriched for GCT (Ala),
+is that because the proteins literally need more alanine (amino acid composition),
+or because among the four Ala codons the cell is picking GCT specifically
+(synonymous preference)? These are very different biological stories.</p>
+<p><strong>Two-layer decomposition.</strong> We split it apart:
+<strong>Layer 1</strong> compares amino acid frequencies (20 AAs) between your
+gene set and the genome.
+<strong>Layer 2</strong> computes RSCU (Relative Synonymous Codon Usage) within
+each amino acid family. RSCU = 1.0 means a codon is used equally with its
+synonyms; RSCU &gt; 1 means preferred, &lt; 1 means avoided.
+Both layers are tested with bootstrap Z-scores, same as Mode 1.</p>
+<p><strong>Attribution.</strong> Each codon gets classified:
+<strong>AA-driven</strong> = the amino acid itself is enriched/depleted, but
+synonymous usage is normal (it&rsquo;s about protein composition, not codon choice).
+<strong>Synonymous-driven</strong> = the amino acid is fine, but this particular
+synonym is over- or under-used (translational selection, tRNA adaptation, GC bias).
+<strong>Both</strong> = protein composition <em>and</em> codon choice are unusual.</p>
+<p><strong>Synonymous drivers.</strong> For codons with significant RSCU deviations,
+we make a rough call on the cause:
+<em>tRNA supply</em> (high gene copy number for the matching tRNA),
+<em>wobble avoidance</em> (Watson-Crick decoded codons preferred over wobble-decoded ones),
+or <em>GC3 bias</em> (systematic preference for G/C-ending codons).
+These are heuristic labels, not gospel &mdash; the real world is messier than
+three neat categories.</p>
+</div>"""
+
     return f"""
 <div class="section">
 <h2>Mode 5: AA vs Codon Disentanglement</h2>
@@ -527,11 +644,12 @@ def _section_mode5(result: dict) -> str:
 {rows}
 </table>
 {driver_html}
+{method_note}
 </div>
 """
 
 
-def _section_mode3(result: dict) -> str:
+def _section_mode3(result: dict, species: str = "") -> str:
     """Mode 3: Optimality profile section."""
     n_genes = result["n_genes"]
     metagene_gs = result["metagene_geneset"]
@@ -545,6 +663,46 @@ def _section_mode3(result: dict) -> str:
     col = "wtai" if "wtai" in scores.columns else "tai"
     mean_score = scores[col].mean()
     std_score = scores[col].std()
+
+    sp = species.lower()
+    if sp == "yeast":
+        trna_note = (
+            "tRNA gene copy numbers for <em>S. cerevisiae</em> (274 tRNA genes "
+            "across ~42 anticodon families)"
+        )
+    elif sp == "human":
+        trna_note = (
+            "tRNA gene copy numbers for <em>H. sapiens</em> (~430 tRNA genes "
+            "from GtRNAdb hg38)"
+        )
+    else:
+        trna_note = f"tRNA gene copy numbers for {escape(species)}"
+
+    method_note = f"""
+<div class="method-note">
+<p><strong>What this is.</strong> A position-by-position optimality profile across
+your genes &mdash; how &ldquo;good&rdquo; the codons are at each position from
+the 5&rsquo; end to the 3&rsquo; end, compared to the genome average.</p>
+<p><strong>The score: wtAI.</strong> Each codon gets a <strong>weighted tRNA
+Adaptation Index</strong> (wtAI) score based on {trna_note}. More tRNA gene copies
+for a codon&rsquo;s anticodon = faster decoding = higher score. The
+&ldquo;weighted&rdquo; part applies a 0.5&times; penalty to wobble base-pairing
+(G:U or I:C at the third position), since wobble decoding is slower than
+Watson-Crick. Scores are normalised 0&ndash;1, where 1.0 is the
+most-efficiently-decoded codon in the genome.</p>
+<p><strong>The metagene.</strong> We normalise every gene to 100 positional bins
+(so a 300-codon gene and a 1,500-codon gene are comparable), compute the average
+wtAI at each bin, and plot the curve. The blue line is your gene set, gray is
+the genome. If blue is above gray, your genes use more optimal codons.</p>
+<p><strong>The 5&rsquo; ramp.</strong> Many highly-expressed genes start with a
+&ldquo;ramp&rdquo; of sub-optimal codons in the first ~30&ndash;50 positions,
+thought to slow early elongation and space out ribosomes. The ramp delta
+(body &minus; ramp) measures this: positive means slower start, which is the
+expected pattern for highly-translated genes. If your gene set shows a bigger
+ramp than the genome, that&rsquo;s a hint these genes are under translational
+selection pressure. Or they just happen to start with rare codons. Biology is
+fun like that.</p>
+</div>"""
 
     return f"""
 <div class="section">
@@ -570,11 +728,12 @@ def _section_mode3(result: dict) -> str:
   </div>
 </div>
 <div class="plot-container">{_img_tag(plot_b64)}</div>
+{method_note}
 </div>
 """
 
 
-def _section_mode4(result: dict) -> str:
+def _section_mode4(result: dict, species: str = "") -> str:
     """Mode 4: Collision potential section."""
     n_genes = result["n_genes"]
     gs = result["transition_matrix_geneset"]
@@ -585,6 +744,42 @@ def _section_mode4(result: dict) -> str:
 
     # Transition bar plot
     plot_b64 = _plot_transitions(gs, bg, fs_enrich, chi2_p, n_genes)
+
+    sp = species.lower()
+    if sp == "yeast":
+        trna_note = "yeast tRNA gene copy numbers (274 tRNA genes)"
+    elif sp == "human":
+        trna_note = "human tRNA gene copy numbers (~430 tRNA genes, GtRNAdb hg38)"
+    else:
+        trna_note = f"{escape(species)} tRNA gene copy numbers"
+
+    method_note = f"""
+<div class="method-note">
+<p><strong>What this is.</strong> A ribosome staring at a fast codon followed by a
+slow codon is a recipe for trouble: the trailing ribosome catches up and &mdash;
+bam &mdash; collision. This mode asks whether your gene set has more or fewer of these
+fast-to-slow (FS) transitions than you&rsquo;d expect from the genome.</p>
+<p><strong>Fast vs slow.</strong> Every codon is classified as &ldquo;fast&rdquo; or
+&ldquo;slow&rdquo; based on its wtAI score (see Mode 3). The threshold is the
+<strong>median wtAI</strong> across all codons, computed from {trna_note}.
+Above the median = fast, below = slow. It&rsquo;s a rough binary, sure, but it
+captures the basic kinetics.</p>
+<p><strong>Four transition types.</strong> We scan each gene&rsquo;s CDS as adjacent
+codon pairs and count how many are:
+<strong>FF</strong> (fast&rarr;fast, smooth sailing),
+<strong>FS</strong> (fast&rarr;slow, collision risk),
+<strong>SF</strong> (slow&rarr;fast, ribosome speeds up), and
+<strong>SS</strong> (slow&rarr;slow, already stalled, no new collision).
+The proportions are averaged across your genes and compared to the genome.</p>
+<p><strong>FS enrichment.</strong> This is the ratio of your gene set&rsquo;s FS
+proportion to the genome&rsquo;s FS proportion. Values above 1.0 mean your genes
+have <em>more</em> collision-prone junctions. Highly expressed genes (like ribosomal
+proteins) tend to show FS enrichment near or below 1.0 &mdash; they&rsquo;ve been
+selected to avoid exactly these transitions.</p>
+<p><strong>Chi-squared test.</strong> Tests whether the overall distribution of
+FF/FS/SF/SS in your gene set differs from the genome. A low p-value means
+the transition pattern is genuinely unusual, not just noisy.</p>
+</div>"""
 
     return f"""
 <div class="section">
@@ -614,11 +809,12 @@ def _section_mode4(result: dict) -> str:
 <tr><th>Transition</th><th>Gene Set</th><th>Genome</th><th>Fold Change</th></tr>
 {"".join(f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>{gs[t]/bg[t]:.3f}</td></tr>' if bg[t] > 0 else f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>-</td></tr>' for t in ('FF','FS','SF','SS'))}
 </table>
+{method_note}
 </div>
 """
 
 
-def _section_mode2(result: dict) -> str:
+def _section_mode2(result: dict, species: str = "") -> str:
     """Mode 2: Translational demand section."""
     df = result["results"]
     top = result["top_genes"]
@@ -643,6 +839,95 @@ def _section_mode2(result: dict) -> str:
           <td>{row['demand_fraction']*100:.1f}%</td>
         </tr>"""
 
+    sp = species.lower()
+    if sp == "yeast":
+        expr_note = (
+            "Expression values are hardcoded estimates for rich-media growth "
+            "(ribosomal proteins at ~3,000 TPM, glycolytic enzymes 500&ndash;5,000, "
+            "median gene ~15 TPM). These are rough approximations &mdash; real "
+            "RNA-seq data would be better, but the rank order is reasonable."
+        )
+        demand_note = (
+            "In yeast, ribosomal proteins dominate translational demand so thoroughly "
+            "(~70% of all ribosomes are making ribosomal proteins in log phase) that "
+            "if your gene set <em>is</em> ribosomal proteins, the Z-scores will be "
+            "modest. The genome demand is already saturated with RP-preferred codons."
+        )
+    elif sp == "human":
+        tissue_str = str(tissue)
+        if "proxy:" in tissue_str:
+            # Cell line with GTEx proxy fallback
+            expr_note = (
+                f"Expression data is from <strong>GTEx v8</strong> tissue proxy "
+                f"({escape(tissue_str)}). CCLE cell line expression data was not "
+                f"available, so the closest GTEx tissue was used as a proxy. "
+                f"This is an approximation &mdash; cell line expression can differ "
+                f"substantially from normal tissue."
+            )
+        elif tissue_str == "cross_tissue_median":
+            expr_note = (
+                "Expression data is from <strong>GTEx v8</strong>, using the "
+                "<strong>cross-tissue median TPM</strong> across all 54 tissues. "
+                "This provides a general-purpose background when no specific tissue "
+                "is selected. For tissue-specific analyses, use <code>--tissue</code> "
+                "to select a specific GTEx tissue."
+            )
+        elif any(c.isdigit() or c == '-' for c in tissue_str) and tissue_str not in (
+            "rich_media", "custom", "cross_tissue_median",
+        ):
+            # Likely a CCLE cell line name (contains digits/hyphens typically)
+            expr_note = (
+                f"Expression data is from <strong>DepMap CCLE</strong> "
+                f"(cell line: {escape(tissue_str)}), RNA-seq TPM. "
+                f"Cell line expression may differ from normal tissue; these values "
+                f"reflect the transcriptome of an immortalised cell line."
+            )
+        else:
+            expr_note = (
+                f"Expression data is from <strong>GTEx v8</strong> "
+                f"(tissue: {escape(tissue_str)}), median TPM across donors. "
+                f"This is real measured RNA-seq, not estimates. Keep in mind that "
+                f"TPM reflects mRNA abundance, not necessarily translation rates &mdash; "
+                f"ribosome profiling would be the gold standard, but TPM is the best "
+                f"widely-available proxy."
+            )
+        demand_note = (
+            "Human tissues have very different expression landscapes. Liver is "
+            "dominated by albumin and complement factors, brain by synaptic "
+            "proteins. The demand profile can change dramatically depending on "
+            "which tissue you pick. If your gene set is tissue-specific, try "
+            "matching the tissue to get the most biologically relevant picture."
+        )
+    else:
+        expr_note = f"Expression data for {escape(species)}."
+        demand_note = ""
+
+    method_note = f"""
+<div class="method-note">
+<p><strong>What this is.</strong> Mode 1 treats every gene equally &mdash; a gene
+expressed at 0.1 TPM counts the same as one at 10,000 TPM. That&rsquo;s fine for
+asking &ldquo;what codons does this gene set prefer?&rdquo; but it ignores a
+crucial reality: the ribosome doesn&rsquo;t care about your gene list, it cares
+about how many mRNAs are actually in the cytoplasm competing for tRNAs.
+<strong>Translational demand</strong> weights each gene by
+TPM &times; number of codons, so a highly expressed long gene contributes
+far more to the demand landscape than a lowly expressed short one.</p>
+<p><strong>Expression source.</strong> {expr_note}</p>
+<p><strong>How it works.</strong> For each gene, we compute codon frequencies
+and weight them by that gene&rsquo;s demand weight (TPM &times; n_codons).
+The weighted mean across your gene set gives the &ldquo;demand profile&rdquo; &mdash;
+what the tRNA pool actually has to decode. We then bootstrap-resample {n_genes}
+genes (with their expression weights) from the genome to build a null, and
+compute Z-scores exactly as in Mode 1. Enriched codons are the ones your gene
+set is demanding disproportionately from the tRNA pool.</p>
+<p><strong>Top genes table.</strong> The &ldquo;Demand %&rdquo; column shows each
+gene&rsquo;s share of total translational demand within your gene set. If one gene
+dominates (say, 40% of demand), the whole demand profile basically reflects that
+gene&rsquo;s codon preferences. Worth checking whether your results are driven by
+one outlier or are a genuine group effect.</p>
+<p>{demand_note}</p>
+</div>"""
+
     return f"""
 <div class="section">
 <h2>Mode 2: Translational Demand</h2>
@@ -659,11 +944,12 @@ def _section_mode2(result: dict) -> str:
 {_demand_table(enriched.head(15))}
 <h3>Top Demand-Depleted Codons</h3>
 {_demand_table(depleted.head(15))}
+{method_note}
 </div>
 """
 
 
-def _section_mode6(result: dict) -> str:
+def _section_mode6(result: dict, species: str = "") -> str:
     """Mode 6: Cross-species comparison section."""
     summary = result["summary"]
     pg = result["per_gene"]
@@ -699,6 +985,35 @@ def _section_mode6(result: dict) -> str:
           <td>{row['rscu_correlation']:.4f}</td>
         </tr>"""
 
+    method_note = f"""
+<div class="method-note">
+<p><strong>What this is.</strong> Do your genes use the same codon preferences in
+{escape(from_sp)} and {escape(to_sp)}? For each ortholog pair, we compute
+RSCU (Relative Synonymous Codon Usage) in both species and correlate them.
+A high Pearson <em>r</em> means the two orthologs pick the same synonymous
+codons (conserved codon usage); a low or negative <em>r</em> means
+they&rsquo;ve diverged.</p>
+<p><strong>Ortholog mapping.</strong> We use {n_genome} one-to-one ortholog pairs
+between {escape(from_sp)} and {escape(to_sp)}, of which {n_ortho} overlap
+with your gene set. Orthologs are matched by gene name with curated renames
+for known discrepancies (e.g., yeast paralogs mapped to their human counterpart).
+Only genes with orthologs in both species contribute to this analysis.</p>
+<p><strong>RSCU correlation.</strong> For each ortholog pair, we compute RSCU
+for all sense codons encoding multi-synonym amino acids (Met and Trp are excluded
+since they have only one codon &mdash; there&rsquo;s no synonym to choose between).
+The Pearson <em>r</em> across these ~59 codon values measures how similar the
+synonymous preferences are. An <em>r</em> near 1.0 means the species use the
+same synonyms; near 0 means no relationship; negative means they actively prefer
+<em>different</em> synonyms.</p>
+<p><strong>Gene set vs genome.</strong> We compare the mean <em>r</em> of your
+gene set&rsquo;s orthologs against the genome-wide distribution (all {n_genome}
+ortholog pairs). The Z-score and p-value tell you whether your genes are more
+conserved or more divergent in codon usage than average. Low mean <em>r</em>
+for ribosomal proteins, for instance, is expected: yeast and human ribosomes
+are built the same way, but their tRNA pools have evolved differently, so
+each species optimises the same proteins with different codons.</p>
+</div>"""
+
     return f"""
 <div class="section">
 <h2>Mode 6: Cross-Species Comparison</h2>
@@ -733,6 +1048,7 @@ def _section_mode6(result: dict) -> str:
 <tr><th>{escape(from_sp)} gene</th><th>{escape(to_sp)} gene</th><th>RSCU r</th></tr>
 {div_rows}
 </table>
+{method_note}
 </div>
 """
 
@@ -757,12 +1073,15 @@ def _results_table(df: pd.DataFrame, k: int) -> str:
         return "<p><em>No significant results.</em></p>"
 
     kname = "kmer" if "kmer" in df.columns else "codon"
+    has_aa = "amino_acid" in df.columns
     rows = ""
     for _, row in df.iterrows():
         z = row["z_score"]
         z_cls = "sig-pos" if z > 0 else "sig-neg"
+        aa_td = f"<td>{escape(str(row['amino_acid']))}</td>" if has_aa else ""
         rows += f"""<tr>
           <td><strong>{escape(str(row[kname]))}</strong></td>
+          {aa_td}
           <td class="{z_cls}">{z:+.2f}</td>
           <td>{row['observed_freq']:.4f}</td>
           <td>{row['expected_freq']:.4f}</td>
@@ -770,8 +1089,9 @@ def _results_table(df: pd.DataFrame, k: int) -> str:
           <td>{row.get('cohens_d', 0):.2f}</td>
         </tr>"""
 
+    aa_th = "<th>AA</th>" if has_aa else ""
     return f"""<table>
-<tr><th>K-mer</th><th>Z-score</th><th>Observed</th><th>Expected</th><th>Adj. p</th><th>Cohen's d</th></tr>
+<tr><th>K-mer</th>{aa_th}<th>Z-score</th><th>Observed</th><th>Expected</th><th>Adj. p</th><th>Cohen's d</th></tr>
 {rows}
 </table>"""
 
@@ -781,20 +1101,24 @@ def _demand_table(df: pd.DataFrame) -> str:
     if len(df) == 0:
         return "<p><em>No significant results.</em></p>"
 
+    has_aa = "amino_acid" in df.columns
     rows = ""
     for _, row in df.iterrows():
         z = row["z_score"]
         z_cls = "sig-pos" if z > 0 else "sig-neg"
+        aa_td = f"<td>{escape(str(row['amino_acid']))}</td>" if has_aa else ""
         rows += f"""<tr>
           <td><strong>{escape(str(row['kmer']))}</strong></td>
+          {aa_td}
           <td class="{z_cls}">{z:+.2f}</td>
           <td>{row['demand_geneset']:.4f}</td>
           <td>{row['demand_genome']:.4f}</td>
           <td>{row['adjusted_p']:.2e}</td>
         </tr>"""
 
+    aa_th = "<th>AA</th>" if has_aa else ""
     return f"""<table>
-<tr><th>K-mer</th><th>Z-score</th><th>Gene Set Demand</th><th>Genome Demand</th><th>Adj. p</th></tr>
+<tr><th>K-mer</th>{aa_th}<th>Z-score</th><th>Gene Set Demand</th><th>Genome Demand</th><th>Adj. p</th></tr>
 {rows}
 </table>"""
 
@@ -942,13 +1266,17 @@ def _plot_demand_bars(
     tissue: str,
 ) -> str:
     """Horizontal bar chart of top demand-enriched/depleted codons."""
+    from codonscope.core.codons import annotate_kmer
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
 
     if len(enriched) > 0:
         y = np.arange(len(enriched))
         ax1.barh(y, enriched["z_score"].values, color="#dc2626", edgecolor="white")
         ax1.set_yticks(y)
-        ax1.set_yticklabels(enriched["kmer"].values, fontsize=8)
+        k = len(enriched["kmer"].iloc[0]) // 3
+        labels_e = [annotate_kmer(km, k) for km in enriched["kmer"].values]
+        ax1.set_yticklabels(labels_e, fontsize=8)
         ax1.invert_yaxis()
         ax1.set_xlabel("Z-score")
         ax1.set_title("Demand-Enriched")
@@ -959,7 +1287,9 @@ def _plot_demand_bars(
         y = np.arange(len(depleted))
         ax2.barh(y, depleted["z_score"].values, color="#2563eb", edgecolor="white")
         ax2.set_yticks(y)
-        ax2.set_yticklabels(depleted["kmer"].values, fontsize=8)
+        k = len(depleted["kmer"].iloc[0]) // 3
+        labels_d = [annotate_kmer(km, k) for km in depleted["kmer"].values]
+        ax2.set_yticklabels(labels_d, fontsize=8)
         ax2.invert_yaxis()
         ax2.set_xlabel("Z-score")
         ax2.set_title("Demand-Depleted")

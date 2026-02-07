@@ -33,6 +33,31 @@ GTEX_MEDIAN_TPM_URL = (
     "GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz"
 )
 
+# ── DepMap CCLE expression data URLs (25Q1 release) ─────────────────────────
+DEPMAP_EXPRESSION_URL = (
+    "https://depmap.org/portal/download/all/"
+    "?releasename=DepMap+Public+25Q1&filename=OmicsExpressionProteinCodingGenesTPMLogp1.csv"
+)
+DEPMAP_MODEL_URL = (
+    "https://depmap.org/portal/download/all/"
+    "?releasename=DepMap+Public+25Q1&filename=Model.csv"
+)
+
+# ── Cell line → GTEx tissue proxy mapping (fallback) ────────────────────────
+CELL_LINE_TISSUE_PROXY: dict[str, str] = {
+    "HEK293T": "Kidney - Cortex",
+    "HEK293": "Kidney - Cortex",
+    "HELA": "Uterus",
+    "U2OS": "Cells - Cultured fibroblasts",
+    "A549": "Lung",
+    "MCF7": "Breast - Mammary Tissue",
+    "K562": "Cells - EBV-transformed lymphocytes",
+    "JURKAT": "Cells - EBV-transformed lymphocytes",
+    "HEPG2": "Liver",
+    "SHSY5Y": "Brain - Cortex",
+    "RPE1": "Cells - Cultured fibroblasts",
+}
+
 # ── Yeast highly-expressed genes (rich media / YPD) ──────────────────────────
 # Well-established expression values from multiple studies (Holstege 1998,
 # Nagalakshmi 2008, Pelechano 2010).  Values are approximate relative mRNA
@@ -73,6 +98,12 @@ SGD_CDS_URL = (
 # ── GtRNAdb download URL ─────────────────────────────────────────────────────
 GTRNADB_YEAST_URL = (
     "http://gtrnadb.ucsc.edu/genomes/eukaryota/Scere3/sacCer3-mature-tRNAs.fa"
+)
+
+# ── HGNC complete gene set ────────────────────────────────────────────────────
+HGNC_COMPLETE_SET_URL = (
+    "https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/"
+    "hgnc_complete_set.txt"
 )
 
 # ── Human download URLs ──────────────────────────────────────────────────────
@@ -818,6 +849,7 @@ def _download_human(species_dir: Path) -> None:
     3. Download tRNA gene copy numbers from GtRNAdb
     4. Save human wobble decoding rules
     5. Pre-compute backgrounds
+    6. Download HGNC alias/previous symbol table
     """
     # 1. Download MANE summary + Ensembl CDS
     sequences, gene_map = _download_human_cds(species_dir)
@@ -833,6 +865,18 @@ def _download_human(species_dir: Path) -> None:
 
     # 5. Download GTEx expression data
     _download_human_expression(species_dir)
+
+    # 6. Download HGNC aliases for gene ID resolution
+    _download_hgnc_aliases(species_dir)
+
+    # 7. Download CCLE cell line expression data (optional, failure is OK)
+    try:
+        _download_ccle_expression(species_dir)
+    except Exception as exc:
+        logger.warning(
+            "CCLE download failed (%s). Cell line expression will use "
+            "GTEx tissue proxies as fallback.", exc
+        )
 
     logger.info("Human download complete. Files in %s", species_dir)
 
@@ -1198,6 +1242,301 @@ def _download_human_expression(species_dir: Path) -> None:
     logger.info(
         "Saved GTEx expression: %d genes × %d tissues to %s",
         len(df), len(tissue_names), expr_path,
+    )
+
+
+def _download_ccle_expression(species_dir: Path) -> None:
+    """Download CCLE/DepMap cell line expression data.
+
+    Downloads:
+    1. Model.csv — cell line metadata (name mapping, lineage)
+    2. OmicsExpressionProteinCodingGenesTPMLogp1.csv — expression matrix
+
+    Saves:
+    - expression_ccle.tsv.gz  (ensembl_gene, symbol, <cell_line_columns...>)
+    - ccle_cell_lines.tsv     (cell_line_name, stripped_name, lineage)
+
+    Values in the DepMap file are log2(TPM+1); we convert back to TPM.
+    Gene columns are "SYMBOL (ENTREZ)" format; we map to ENSG via gene_id_map.
+    """
+    ccle_path = species_dir / "expression_ccle.tsv.gz"
+    meta_path = species_dir / "ccle_cell_lines.tsv"
+
+    # Load gene_id_map for Entrez → ENSG mapping
+    gene_map_path = species_dir / "gene_id_map.tsv"
+    if not gene_map_path.exists():
+        raise FileNotFoundError(
+            "gene_id_map.tsv not found. Run human download first."
+        )
+    gene_map = pd.read_csv(gene_map_path, sep="\t")
+
+    # Build Entrez ID → (ENSG, symbol) lookup
+    entrez_to_ensg: dict[str, tuple[str, str]] = {}
+    if "entrez_id" in gene_map.columns:
+        for _, row in gene_map.iterrows():
+            eid = row.get("entrez_id")
+            if pd.notna(eid):
+                eid_str = str(int(float(eid)))
+                entrez_to_ensg[eid_str] = (
+                    row["systematic_name"],
+                    row.get("common_name", ""),
+                )
+
+    # Also build symbol → ENSG for fallback
+    symbol_to_ensg: dict[str, tuple[str, str]] = {}
+    for _, row in gene_map.iterrows():
+        cn = row.get("common_name", "")
+        if cn:
+            symbol_to_ensg[cn.upper()] = (
+                row["systematic_name"],
+                cn,
+            )
+
+    # ── Step 1: Download Model.csv ──────────────────────────────────────
+    logger.info("Downloading DepMap Model.csv...")
+    resp = requests.get(DEPMAP_MODEL_URL, timeout=120)
+    resp.raise_for_status()
+
+    model_df = pd.read_csv(io.StringIO(resp.text))
+    # Build ModelID → cell line name/lineage mapping
+    model_info: dict[str, dict] = {}
+    name_col = "CellLineName" if "CellLineName" in model_df.columns else "cell_line_name"
+    stripped_col = "StrippedCellLineName" if "StrippedCellLineName" in model_df.columns else None
+    lineage_col = "OncotreeLineage" if "OncotreeLineage" in model_df.columns else None
+    model_id_col = "ModelID" if "ModelID" in model_df.columns else "model_id"
+
+    for _, row in model_df.iterrows():
+        mid = str(row.get(model_id_col, ""))
+        cname = str(row.get(name_col, mid))
+        stripped = str(row.get(stripped_col, cname)).upper() if stripped_col else cname.upper()
+        lineage = str(row.get(lineage_col, "")) if lineage_col else ""
+        model_info[mid] = {
+            "cell_line_name": cname,
+            "stripped_name": stripped,
+            "lineage": lineage,
+        }
+
+    logger.info("Parsed %d cell line models from DepMap", len(model_info))
+
+    # ── Step 2: Download expression matrix ──────────────────────────────
+    logger.info("Downloading DepMap expression matrix (this may take a few minutes)...")
+    resp = requests.get(DEPMAP_EXPRESSION_URL, timeout=600, stream=True)
+    resp.raise_for_status()
+
+    # Parse CSV: first column is ModelID, rest are "GENE (ENTREZ)" columns
+    expr_df = pd.read_csv(io.StringIO(resp.text), index_col=0)
+    logger.info(
+        "Downloaded expression matrix: %d cell lines × %d genes",
+        len(expr_df), len(expr_df.columns),
+    )
+
+    # ── Step 3: Map gene columns to ENSG ────────────────────────────────
+    # Column format: "SYMBOL (12345)" — extract Entrez ID
+    import re as _re
+    col_mapping: dict[str, tuple[str, str]] = {}  # old_col → (ensg, symbol)
+    for col in expr_df.columns:
+        match = _re.match(r"(.+?)\s*\((\d+)\)", col)
+        if match:
+            symbol = match.group(1).strip()
+            entrez = match.group(2)
+            if entrez in entrez_to_ensg:
+                col_mapping[col] = entrez_to_ensg[entrez]
+            elif symbol.upper() in symbol_to_ensg:
+                col_mapping[col] = symbol_to_ensg[symbol.upper()]
+
+    if not col_mapping:
+        raise ValueError("Could not map any CCLE gene columns to ENSG IDs.")
+
+    logger.info(
+        "Mapped %d/%d CCLE gene columns to ENSG",
+        len(col_mapping), len(expr_df.columns),
+    )
+
+    # ── Step 4: Convert log2(TPM+1) → TPM ──────────────────────────────
+    # Select mapped columns only
+    mapped_cols = list(col_mapping.keys())
+    expr_mapped = expr_df[mapped_cols].copy()
+
+    # Convert from log2(TPM+1) to TPM
+    expr_mapped = 2.0 ** expr_mapped - 1.0
+    expr_mapped = expr_mapped.clip(lower=0.0)
+
+    # ── Step 5: Rename columns to ENSG, rename rows to cell line names ──
+    # Handle duplicate ENSG mappings by keeping first occurrence
+    new_col_names = {}
+    seen_ensg = set()
+    keep_cols = []
+    for col in mapped_cols:
+        ensg, _ = col_mapping[col]
+        if ensg not in seen_ensg:
+            new_col_names[col] = ensg
+            seen_ensg.add(ensg)
+            keep_cols.append(col)
+
+    expr_mapped = expr_mapped[keep_cols].rename(columns=new_col_names)
+
+    # Replace row index (ModelID) with human-readable cell line names
+    new_index = []
+    for mid in expr_mapped.index:
+        if mid in model_info:
+            new_index.append(model_info[mid]["cell_line_name"])
+        else:
+            new_index.append(mid)
+    expr_mapped.index = new_index
+
+    # ── Step 6: Transpose to genes × cell_lines format ──────────────────
+    # (matching GTEx storage: rows=genes, columns=cell lines)
+    out_df = expr_mapped.T
+    out_df.index.name = "ensembl_gene"
+    out_df = out_df.reset_index()
+
+    # Add symbol column
+    ensg_to_symbol = {}
+    for _, row in gene_map.iterrows():
+        ensg_to_symbol[row["systematic_name"]] = row.get("common_name", "")
+    out_df.insert(1, "symbol", out_df["ensembl_gene"].map(ensg_to_symbol).fillna(""))
+
+    # ── Step 7: Save ────────────────────────────────────────────────────
+    cell_line_cols = [c for c in out_df.columns if c not in ("ensembl_gene", "symbol")]
+    out_df.to_csv(ccle_path, sep="\t", index=False, compression="gzip")
+    logger.info(
+        "Saved CCLE expression: %d genes × %d cell lines to %s",
+        len(out_df), len(cell_line_cols), ccle_path,
+    )
+
+    # Save cell line metadata
+    meta_rows = []
+    for cname in cell_line_cols:
+        # Find this cell line in model_info
+        found = False
+        for mid, info in model_info.items():
+            if info["cell_line_name"] == cname:
+                meta_rows.append({
+                    "cell_line_name": cname,
+                    "stripped_name": info["stripped_name"],
+                    "lineage": info["lineage"],
+                })
+                found = True
+                break
+        if not found:
+            meta_rows.append({
+                "cell_line_name": cname,
+                "stripped_name": cname.upper().replace("-", "").replace(" ", ""),
+                "lineage": "",
+            })
+
+    meta_df = pd.DataFrame(meta_rows)
+    meta_df.to_csv(meta_path, sep="\t", index=False)
+    logger.info("Saved cell line metadata: %d entries to %s", len(meta_df), meta_path)
+
+
+def download_ccle(data_dir: str | Path | None = None) -> Path:
+    """Download CCLE cell line expression data (standalone).
+
+    Args:
+        data_dir: Override default data directory.
+
+    Returns:
+        Path to the human species directory.
+    """
+    base = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+    species_dir = base / "human"
+    if not species_dir.exists():
+        raise FileNotFoundError(
+            f"Human data directory not found: {species_dir}. "
+            f"Run: codonscope download --species human"
+        )
+    _download_ccle_expression(species_dir)
+    return species_dir
+
+
+def _download_hgnc_aliases(species_dir: Path) -> None:
+    """Download HGNC complete set and build alias/previous symbol lookup.
+
+    Creates hgnc_aliases.tsv mapping alias/previous symbols to their
+    canonical HGNC symbol and Ensembl gene ID.  Only includes entries
+    where the ENSG exists in our gene_id_map (MANE Select genes).
+    """
+    alias_path = species_dir / "hgnc_aliases.tsv"
+
+    # Load existing gene_id_map to filter aliases to known genes
+    gene_map_path = species_dir / "gene_id_map.tsv"
+    if not gene_map_path.exists():
+        logger.warning("gene_id_map.tsv not found, skipping HGNC alias download")
+        return
+
+    gene_map = pd.read_csv(gene_map_path, sep="\t")
+    known_ensg = set(gene_map["systematic_name"].str.strip())
+    # Also build symbol→ENSG for current symbols (already in common_name)
+    symbol_to_ensg: dict[str, str] = {}
+    for _, row in gene_map.iterrows():
+        sym = str(row["common_name"]).strip().upper()
+        ensg = str(row["systematic_name"]).strip()
+        if sym and sym != "NAN":
+            symbol_to_ensg[sym] = ensg
+
+    try:
+        logger.info("Downloading HGNC complete gene set...")
+        resp = requests.get(HGNC_COMPLETE_SET_URL, timeout=120)
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("HGNC download failed (%s), alias lookup will not be available", exc)
+        return
+
+    # Parse TSV
+    hgnc_df = pd.read_csv(io.StringIO(resp.text), sep="\t", low_memory=False)
+
+    rows: list[dict] = []
+    for _, row in hgnc_df.iterrows():
+        symbol = str(row.get("symbol", "")).strip()
+        if not symbol:
+            continue
+
+        # Get Ensembl gene ID from HGNC record
+        ensg_raw = str(row.get("ensembl_gene_id", "")).strip()
+        ensg = ensg_raw if ensg_raw and ensg_raw != "nan" else None
+
+        # Only include if ENSG is in our MANE Select set
+        if ensg is None or ensg not in known_ensg:
+            continue
+
+        # Previous symbols (pipe-separated)
+        prev_raw = str(row.get("prev_symbol", "")).strip()
+        if prev_raw and prev_raw != "nan":
+            for prev in prev_raw.split("|"):
+                prev = prev.strip().strip('"')
+                if prev and prev.upper() != symbol.upper():
+                    rows.append({
+                        "alias": prev,
+                        "canonical_symbol": symbol,
+                        "ensembl_gene_id": ensg,
+                        "alias_type": "previous",
+                    })
+
+        # Alias symbols (pipe-separated)
+        alias_raw = str(row.get("alias_symbol", "")).strip()
+        if alias_raw and alias_raw != "nan":
+            for alias in alias_raw.split("|"):
+                alias = alias.strip().strip('"')
+                if alias and alias.upper() != symbol.upper():
+                    rows.append({
+                        "alias": alias,
+                        "canonical_symbol": symbol,
+                        "ensembl_gene_id": ensg,
+                        "alias_type": "alias",
+                    })
+
+    if not rows:
+        logger.warning("No HGNC aliases matched MANE Select genes")
+        return
+
+    alias_df = pd.DataFrame(rows)
+    # Remove duplicates (keep first — previous takes priority)
+    alias_df = alias_df.drop_duplicates(subset=["alias"], keep="first")
+    alias_df.to_csv(alias_path, sep="\t", index=False)
+    logger.info(
+        "Saved %d HGNC aliases (previous + alias symbols) to %s",
+        len(alias_df), alias_path,
     )
 
 

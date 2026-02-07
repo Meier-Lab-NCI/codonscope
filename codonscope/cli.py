@@ -165,7 +165,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     dem_parser.add_argument(
         "--tissue", type=str, default=None,
-        help="GTEx tissue name for human (default: first available)",
+        help="GTEx tissue name for human (default: cross-tissue median TPM)",
+    )
+    dem_parser.add_argument(
+        "--cell-line", type=str, default=None,
+        help="CCLE cell line for human (e.g. HEK293T, HeLa, K562)",
     )
     dem_parser.add_argument(
         "--expression", type=str, default=None,
@@ -214,6 +218,10 @@ def main(argv: list[str] | None = None) -> int:
     rep_parser.add_argument(
         "--tissue", type=str, default=None,
         help="GTEx tissue for human demand analysis (Mode 2)",
+    )
+    rep_parser.add_argument(
+        "--cell-line", type=str, default=None,
+        help="CCLE cell line for human demand analysis (Mode 2)",
     )
     rep_parser.add_argument(
         "--n-bootstrap", type=int, default=10000,
@@ -352,6 +360,11 @@ def _cmd_report(args: argparse.Namespace) -> int:
         logging.error("No gene IDs found in %s", args.genes)
         return 1
 
+    cell_line = getattr(args, "cell_line", None)
+    if args.tissue and cell_line:
+        logging.error("Cannot specify both --tissue and --cell-line")
+        return 1
+
     print("CodonScope: Generating comprehensive HTML report")
     print(f"  Species: {args.species}")
     print(f"  Genes: {len(gene_ids)} IDs from {args.genes}")
@@ -359,6 +372,8 @@ def _cmd_report(args: argparse.Namespace) -> int:
         print(f"  Cross-species: {args.species2}")
     if args.tissue:
         print(f"  Tissue: {args.tissue}")
+    elif cell_line:
+        print(f"  Cell line: {cell_line}")
     print()
 
     output = generate_report(
@@ -367,6 +382,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
         output=args.output,
         species2=args.species2,
         tissue=args.tissue,
+        cell_line=cell_line,
         n_bootstrap=args.n_bootstrap,
         seed=args.seed,
         data_dir=args.data_dir,
@@ -431,10 +447,12 @@ def _cmd_composition(args: argparse.Namespace) -> int:
     print(f"\nSignificant k-mers (adj_p < 0.05): {len(sig)}")
 
     if len(sig) > 0:
+        from codonscope.core.codons import annotate_kmer
         print(f"\nTop enriched:")
         enriched = sig[sig["z_score"] > 0].head(10)
         for _, row in enriched.iterrows():
-            print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
+            label = annotate_kmer(row["kmer"], args.kmer)
+            print(f"  {label:>24s}  Z={row['z_score']:+6.2f}  "
                   f"obs={row['observed_freq']:.4f}  exp={row['expected_freq']:.4f}  "
                   f"adj_p={row['adjusted_p']:.2e}")
 
@@ -442,7 +460,8 @@ def _cmd_composition(args: argparse.Namespace) -> int:
         if len(depleted) > 0:
             print(f"\nTop depleted:")
             for _, row in depleted.iterrows():
-                print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
+                label = annotate_kmer(row["kmer"], args.kmer)
+                print(f"  {label:>24s}  Z={row['z_score']:+6.2f}  "
                       f"obs={row['observed_freq']:.4f}  exp={row['expected_freq']:.4f}  "
                       f"adj_p={row['adjusted_p']:.2e}")
 
@@ -461,6 +480,11 @@ def _cmd_demand(args: argparse.Namespace) -> int:
         logging.error("No gene IDs found in %s", args.genes)
         return 1
 
+    cell_line = getattr(args, "cell_line", None)
+    if args.tissue and cell_line:
+        logging.error("Cannot specify both --tissue and --cell-line")
+        return 1
+
     k = args.kmer
     print("CodonScope Mode 2: Translational Demand")
     print(f"  Species: {args.species}")
@@ -468,6 +492,10 @@ def _cmd_demand(args: argparse.Namespace) -> int:
     print(f"  K-mer: {k} ({'mono' if k == 1 else 'di' if k == 2 else 'tri'}codon)")
     if args.tissue:
         print(f"  Tissue: {args.tissue}")
+    elif cell_line:
+        print(f"  Cell line: {cell_line}")
+    elif args.species.lower() == "human" and not args.expression:
+        print("  Expression: cross-tissue median TPM (no --tissue specified)")
     if args.top_n:
         print(f"  Top-N background: {args.top_n}")
     print()
@@ -477,6 +505,7 @@ def _cmd_demand(args: argparse.Namespace) -> int:
         gene_ids=gene_ids,
         k=k,
         tissue=args.tissue,
+        cell_line=cell_line,
         expression_file=args.expression,
         top_n=args.top_n,
         n_bootstrap=args.n_bootstrap,
@@ -503,10 +532,12 @@ def _cmd_demand(args: argparse.Namespace) -> int:
     print(f"\nSignificant k-mers (adj_p < 0.05): {len(sig)}")
 
     if len(sig) > 0:
+        from codonscope.core.codons import annotate_kmer
         print(f"\nTop demand-enriched:")
         enriched = sig[sig["z_score"] > 0].head(10)
         for _, row in enriched.iterrows():
-            print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
+            label = annotate_kmer(row["kmer"], k)
+            print(f"  {label:>24s}  Z={row['z_score']:+6.2f}  "
                   f"demand={row['demand_geneset']:.4f}  "
                   f"genome={row['demand_genome']:.4f}  "
                   f"adj_p={row['adjusted_p']:.2e}")
@@ -515,7 +546,8 @@ def _cmd_demand(args: argparse.Namespace) -> int:
         if len(depleted) > 0:
             print(f"\nTop demand-depleted:")
             for _, row in depleted.iterrows():
-                print(f"  {row['kmer']:>12s}  Z={row['z_score']:+6.2f}  "
+                label = annotate_kmer(row["kmer"], k)
+                print(f"  {label:>24s}  Z={row['z_score']:+6.2f}  "
                       f"demand={row['demand_geneset']:.4f}  "
                       f"genome={row['demand_genome']:.4f}  "
                       f"adj_p={row['adjusted_p']:.2e}")
