@@ -14,8 +14,9 @@ Building in chunks. See below for what exists and what's next.
 1. **Data layer + yeast** ✅ DONE
 2. Core counting engine + statistics ✅ DONE
 3. Mode 1 (composition) + CLI ✅ DONE
-4. Mode 5 (AA vs codon disentanglement) ← NEXT
-5. Mode 3 (optimality profile) + Mode 4 (collision potential)
+4. Human species support ✅ DONE
+5. Mode 5 (AA vs codon disentanglement) ✅ DONE
+6. Mode 3 (optimality profile) + Mode 4 (collision potential) ← NEXT
 6. Mode 2 (translational demand)
 7. Mode 6 (cross-species comparison)
 8. HTML report generation
@@ -31,8 +32,20 @@ Building in chunks. See below for what exists and what's next.
   - `tests/test_statistics.py` — 29 tests incl. yeast positive controls
 - [x] Chunk 3: Mode 1 (composition) + CLI (71 total tests passing)
   - `codonscope/modes/mode1_composition.py` — run_composition() with matched background, diagnostics, plots
-  - `codonscope/cli.py` — argparse CLI with download + composition subcommands
+  - `codonscope/cli.py` — argparse CLI with download + composition + disentangle subcommands
   - `tests/test_mode1.py` — 19 tests incl. ribosomal protein positive controls
+- [x] Human species support (104 total tests passing)
+  - MANE Select v1.5: 19,229 validated CDS from NCBI + Ensembl
+  - Gene ID mapping: HGNC symbol, ENSG, ENST, Entrez ID
+  - Human tRNA (hardcoded fallback) + wobble rules (ALKBH8/NSUN2)
+  - Pre-computed mono/di/tri backgrounds
+  - `tests/test_human.py` — 33 tests incl. Mode 1 on human RP genes
+- [x] Mode 5: AA vs Codon Disentanglement (131 total tests passing)
+  - `codonscope/modes/mode5_disentangle.py` — two-layer decomposition (AA + RSCU)
+  - Attribution: AA-driven, synonymous-driven, or both
+  - Synonymous driver classification: tRNA supply, GC3 bias, wobble avoidance
+  - Verified: Gcn4 → Gly AA-enriched, RP → synonymous-driven
+  - `tests/test_mode5.py` — 27 tests
 
 ## Architecture
 
