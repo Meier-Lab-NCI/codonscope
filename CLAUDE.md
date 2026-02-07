@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**207 tests passing. 13 commits on main.**
+**215 tests passing. 14 commits on main.**
 
 ### Build progress
 
@@ -46,14 +46,14 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 **CLI:**
 - `codonscope/cli.py` — argparse with subcommands: `download`, `composition`, `demand`, `profile`, `collision`, `disentangle`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
 
-**Tests (207 passing):**
+**Tests (215 passing):**
 - `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds
 - `tests/test_statistics.py` — 29 tests: bootstrap, BH correction, Cohen's d, KS diagnostics, yeast positive controls (RP genes, YEF3)
 - `tests/test_mode1.py` — 19 tests: gene list parsing, composition pipeline, matched background, diagnostics, CLI, RP positive controls
 - `tests/test_human.py` — 33 tests: human download files, gene map structure, CDS validation, ID resolution (HGNC/ENSG/ENST/Entrez), backgrounds, Mode 1 on human RP genes
 - `tests/test_mode3.py` — 26 tests: OptimalityScorer (13 unit tests), metagene profile shape/values, ramp analysis, yeast RP integration (high optimality + ramp), random gene negative control, CLI
 - `tests/test_mode4.py` — 22 tests: transition counting (FF/FS/SF/SS), proportions, FS enrichment, chi-squared, yeast RP integration (low collision, high FF), Gcn4 comparison, CLI
-- `tests/test_mode2.py` — 28 tests (8 skip w/o GTEx): demand vector unit tests, expression loading, weighted bootstrap, yeast RP demand (optimal codons enriched), Gcn4 demand, human liver demand, CLI
+- `tests/test_mode2.py` — 36 tests: demand vector unit tests, expression loading (yeast + human GTEx), weighted bootstrap, yeast RP demand (optimal codons enriched), Gcn4 demand, human liver demand, CLI
 - `tests/test_mode5.py` — 27 tests: codon table, AA frequencies, RSCU, attribution logic, summary, Gcn4 + RP integration tests, CLI
 
 ### Species data (in `~/.codonscope/data/species/`)
@@ -81,7 +81,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 ### Known issues
 
 1. **GtRNAdb parser broken.** Both yeast and human tRNA downloads return 0 parsed anticodons. The GtRNAdb FASTA header format may have changed. Hardcoded fallback tables work fine. Low priority — fix if someone needs live tRNA data.
-2. **MANE version hardcoded.** URL contains `v1.5`. When NCBI releases v1.6+, the download URL will 404 and need updating. The Ensembl CDS URL uses `current_fasta` (auto-updates).
+2. **MANE version hardcoded.** URL contains `v1.5`. When NCBI releases v1.6+, the download URL will 404 and need updating. The Ensembl CDS URL uses `current_fasta` (auto-updates). GTEx URL updated to `adult-gtex/bulk-gex/v8/rna-seq/` (old `gtex_analysis_v8` bucket returned 404).
 3. **Tricodon backgrounds have no per-gene matrix.** The 226,981 × N_genes matrix is too large. Tricodon analysis uses analytic SE (`std / sqrt(n_genes)`) instead of bootstrap. This is less accurate for small gene sets.
 4. **Dicodon background files are large.** Human di background is ~280MB (19K genes × 3,721 dicodons × float32). Consider sparse storage if disk space is a concern.
 5. **Mode 5 synonymous driver classification is heuristic.** Uses simple rules (Watson-Crick + enriched → wobble avoidance, high tRNA copies + enriched → tRNA supply). A more rigorous approach would use per-family regression.
