@@ -8,95 +8,113 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-Building in chunks. See below for what exists and what's next.
+**131 tests passing. 10 commits on main.**
 
-### Chunk order
-1. **Data layer + yeast** ✅ DONE
-2. Core counting engine + statistics ✅ DONE
-3. Mode 1 (composition) + CLI ✅ DONE
-4. Human species support ✅ DONE
-5. Mode 5 (AA vs codon disentanglement) ✅ DONE
-6. Mode 3 (optimality profile) + Mode 4 (collision potential) ← NEXT
-6. Mode 2 (translational demand)
-7. Mode 6 (cross-species comparison)
-8. HTML report generation
+### Build progress
 
-### What's built
-- [x] Chunk 1: Data layer + yeast (6,685 ORFs, all 23 tests passing)
-  - `codonscope/core/codons.py` — k-mer counting (mono/di/tri), fully implemented
-  - `codonscope/core/sequences.py` — SequenceDB with ID resolution
-  - `codonscope/data/download.py` — SGD CDS, tRNA, wobble rules, backgrounds
-  - `tests/test_chunk1.py` — 23 tests
-- [x] Chunk 2: Statistics engine (52 total tests passing)
-  - `codonscope/core/statistics.py` — bootstrap Z-scores, BH correction, Cohen's d, power warnings, KS diagnostics, full pipeline
-  - `tests/test_statistics.py` — 29 tests incl. yeast positive controls
-- [x] Chunk 3: Mode 1 (composition) + CLI (71 total tests passing)
-  - `codonscope/modes/mode1_composition.py` — run_composition() with matched background, diagnostics, plots
-  - `codonscope/cli.py` — argparse CLI with download + composition + disentangle subcommands
-  - `tests/test_mode1.py` — 19 tests incl. ribosomal protein positive controls
-- [x] Human species support (104 total tests passing)
-  - MANE Select v1.5: 19,229 validated CDS from NCBI + Ensembl
-  - Gene ID mapping: HGNC symbol, ENSG, ENST, Entrez ID
-  - Human tRNA (hardcoded fallback) + wobble rules (ALKBH8/NSUN2)
-  - Pre-computed mono/di/tri backgrounds
-  - `tests/test_human.py` — 33 tests incl. Mode 1 on human RP genes
-- [x] Mode 5: AA vs Codon Disentanglement (131 total tests passing)
-  - `codonscope/modes/mode5_disentangle.py` — two-layer decomposition (AA + RSCU)
-  - Attribution: AA-driven, synonymous-driven, or both
-  - Synonymous driver classification: tRNA supply, GC3 bias, wobble avoidance
-  - Verified: Gcn4 → Gly AA-enriched, RP → synonymous-driven
-  - `tests/test_mode5.py` — 27 tests
+| # | Chunk | Status |
+|---|-------|--------|
+| 1 | Data layer + yeast | ✅ Done |
+| 2 | Core counting engine + statistics | ✅ Done |
+| 3 | Mode 1 (composition) + CLI | ✅ Done |
+| 4 | Human species support | ✅ Done |
+| 5 | Mode 5 (AA vs codon disentanglement) | ✅ Done |
+| 6 | Mode 3 (optimality profile) + Mode 4 (collision potential) | ← Next |
+| 7 | Mode 2 (translational demand) | Planned |
+| 8 | Mode 6 (cross-species comparison) | Planned |
+| 9 | HTML report generation | Planned |
 
-## Architecture
+### What exists (files and what they do)
 
-```
-codonscope/
-├── cli.py                  # CLI entry point (argparse)
-├── core/
-│   ├── sequences.py        # CDS retrieval, isoform selection, ID mapping
-│   ├── codons.py           # k-mer counting engine (mono/di/tri)
-│   ├── statistics.py       # Z-scores, permutation tests, BH correction
-│   ├── optimality.py       # tAI, wobble-aware scoring, codon classification
-│   └── orthologs.py        # Cross-species ortholog mapping
-├── modes/
-│   ├── mode1_composition.py
-│   ├── mode2_demand.py
-│   ├── mode3_profile.py
-│   ├── mode4_collision.py
-│   ├── mode5_disentangle.py
-│   └── mode6_crossspecies.py
-├── data/
-│   ├── download.py         # Setup script to fetch all reference data
-│   └── species/            # Per-species reference data (downloaded, not in repo)
-├── viz/
-│   ├── plots.py
-│   └── report.py
-└── tests/
-    ├── test_positive_controls.py
-    └── test_statistics.py
-```
+**Core engine:**
+- `codonscope/__init__.py` — version 0.1.0
+- `codonscope/core/codons.py` — k-mer counting engine (mono/di/tri), `sequence_to_codons()`, `count_kmers()`, `kmer_frequencies()`, `all_possible_kmers()`, `SENSE_CODONS` (61 sense codons)
+- `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Resolves yeast (systematic name, common name) and human (HGNC symbol, ENSG, ENST, Entrez ID) gene identifiers. `get_sequences()` accepts IDMapping, dict, or list[str].
+- `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline
 
-## Key dependencies
+**Data layer:**
+- `codonscope/data/download.py` — `download("yeast")` and `download("human")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds. Curated wobble rule tables for both species.
 
-```
-python >= 3.9
-numpy, scipy, pandas, matplotlib, seaborn, requests, tqdm
-```
+**Analysis modes:**
+- `codonscope/modes/mode1_composition.py` — `run_composition()` with "all" or "matched" (length+GC) backgrounds, KS diagnostics, volcano + bar chart plots. Accepts k=1/2/3 (aliases: `kmer`, `kmer_size`).
+- `codonscope/modes/mode5_disentangle.py` — `run_disentangle()` with two-layer decomposition (AA composition + RSCU), attribution (AA-driven / synonymous-driven / both), synonymous driver classification (tRNA supply, GC3 bias, wobble avoidance), two-panel plot.
 
-No BioPython, no pysam. Keep it lightweight.
+**CLI:**
+- `codonscope/cli.py` — argparse with subcommands: `download`, `composition`, `disentangle`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
+
+**Tests (131 passing):**
+- `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds
+- `tests/test_statistics.py` — 29 tests: bootstrap, BH correction, Cohen's d, KS diagnostics, yeast positive controls (RP genes, YEF3)
+- `tests/test_mode1.py` — 19 tests: gene list parsing, composition pipeline, matched background, diagnostics, CLI, RP positive controls
+- `tests/test_human.py` — 33 tests: human download files, gene map structure, CDS validation, ID resolution (HGNC/ENSG/ENST/Entrez), backgrounds, Mode 1 on human RP genes
+- `tests/test_mode5.py` — 27 tests: codon table, AA frequencies, RSCU, attribution logic, summary, Gcn4 + RP integration tests, CLI
+
+### Species data (in `~/.codonscope/data/species/`)
+
+**Yeast (S. cerevisiae):**
+- 6,685 validated ORFs from SGD (`orf_coding_all.fasta.gz`)
+- Mitochondrial ORFs (Q0*) excluded from backgrounds
+- tRNA: hardcoded fallback (GtRNAdb parse fails)
+- Files: `cds_sequences.fa.gz`, `gene_id_map.tsv`, `trna_copy_numbers.tsv`, `wobble_rules.tsv`, `background_{mono,di,tri}.npz`, `gene_metadata.npz`
+
+**Human:**
+- 19,229 validated CDS from MANE Select v1.5 (NCBI summary + Ensembl CDS FASTA)
+- Gene ID map includes: systematic_name (ENSG), common_name (HGNC symbol), ensembl_transcript, refseq_transcript, entrez_id
+- tRNA: hardcoded fallback (GtRNAdb parse fails)
+- Same file structure as yeast
+
+### Positive controls (verified)
+
+- **Yeast Gcn4 targets (~59 mapped genes):** AGA-GAA dicodon Z=3.66 (all bg), Z=4.33 (matched bg, adj_p=9.6e-4). Top dicodon enrichment is GGT-containing (glycine). Mode 5 confirms Gly AA is enriched (AA-driven signal).
+- **Yeast ribosomal proteins (~114 mapped genes):** Strong monocodon and dicodon bias. Mode 5 confirms synonymous-driven RSCU deviations (translational selection).
+- **Human ribosomal proteins (14 genes):** Mode 1 monocodon shows significant codon bias.
+
+### Known issues
+
+1. **GtRNAdb parser broken.** Both yeast and human tRNA downloads return 0 parsed anticodons. The GtRNAdb FASTA header format may have changed. Hardcoded fallback tables work fine. Low priority — fix if someone needs live tRNA data.
+2. **MANE version hardcoded.** URL contains `v1.5`. When NCBI releases v1.6+, the download URL will 404 and need updating. The Ensembl CDS URL uses `current_fasta` (auto-updates).
+3. **Tricodon backgrounds have no per-gene matrix.** The 226,981 × N_genes matrix is too large. Tricodon analysis uses analytic SE (`std / sqrt(n_genes)`) instead of bootstrap. This is less accurate for small gene sets.
+4. **Dicodon background files are large.** Human di background is ~280MB (19K genes × 3,721 dicodons × float32). Consider sparse storage if disk space is a concern.
+5. **Mode 5 synonymous driver classification is heuristic.** Uses simple rules (Watson-Crick + enriched → wobble avoidance, high tRNA copies + enriched → tRNA supply). A more rigorous approach would use per-family regression.
+6. **No expression data yet.** Mode 2 (translational demand) requires GTEx/yeast expression data. Not downloaded.
+7. **No ortholog data yet.** Mode 6 (cross-species comparison) requires Ensembl Compara. Not downloaded.
+8. **`optimality.py` and `orthologs.py` not yet created.** Needed for Modes 3, 4, and 6.
 
 ## Design decisions (read before coding)
 
 1. **One canonical transcript per gene.** Human = MANE Select. Mouse = Ensembl canonical. Yeast = SGD verified ORF. Never use all isoforms — inflates statistics.
 2. **Frequencies computed per-gene then averaged.** Not pooled across genes. This treats genes equally regardless of CDS length.
 3. **Dicodons/tricodons use sliding windows.** Positions 1-2, 2-3, 3-4... NOT non-overlapping pairs.
-4. **Strip stop codon before counting.** Validate CDSs: divisible by 3, starts with ATG, ends with stop.
-5. **Bootstrap Z-scores, not analytic.** Resample N genes from genome 10,000 times for SE estimation.
+4. **Strip stop codon before counting.** Validate CDSs: divisible by 3, starts with ATG, ends with stop. Stop codon stripped after validation.
+5. **Bootstrap Z-scores, not analytic.** Resample N genes from genome 10,000 times for SE estimation. Exception: tricodons use analytic SE (no per-gene matrix).
 6. **Benjamini-Hochberg correction** across all k-mers within each mode.
+7. **IDMapping class.** `resolve_ids()` returns an `IDMapping` object that behaves like `dict[input_id → systematic_name]`. Has `.unmapped`, `.n_mapped`, `.n_unmapped`. Backwards compat: `result["mapping"]` etc. still works.
+8. **Species-dispatched ID resolution.** Yeast uses regex for systematic names + case-insensitive common name lookup. Human uses ENSG/ENST regex, numeric Entrez lookup, and case-insensitive HGNC symbol lookup.
 
-## Positive controls (use for testing)
+## How to run
 
-- **Yeast Gcn4 targets (~80 genes)**: Must show AGA-GAA dicodon Z > 3
-- **Yeast ribosomal proteins (~128 genes)**: Must show highest codon bias
-- **Yeast YEF3 (YLR249W)**: AGA-AGA Z=4.8, GAA-AGA Z=4.1 (published values)
-- **Human membrane proteins**: Mode 5 must show bias is AA-driven, not synonymous
+```bash
+# Download reference data
+python3 -c "from codonscope.data.download import download; download('yeast')"
+python3 -c "from codonscope.data.download import download; download('human')"
+
+# Run tests
+python3 -m pytest tests/ -v
+
+# Mode 1: Composition analysis
+python3 -m codonscope.cli composition --species yeast --genes genelist.txt --kmer 2
+
+# Mode 5: Disentanglement
+python3 -m codonscope.cli disentangle --species yeast --genes genelist.txt
+```
+
+## Key dependencies
+
+```
+python >= 3.9
+numpy, scipy, pandas, matplotlib, requests, tqdm
+```
+
+No BioPython, no pysam. Keep it lightweight.
+
+export PATH="$HOME/.local/bin:$PATH"
