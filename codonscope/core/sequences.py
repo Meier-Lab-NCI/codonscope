@@ -16,6 +16,10 @@ _YEAST_SYSTEMATIC_RE = re.compile(
     r"^Y[A-P][LR]\d{3}[WC](-[A-Z])?$", re.IGNORECASE
 )
 
+# Human/Ensembl ID patterns
+_ENSG_RE = re.compile(r"^ENSG\d{11}(\.\d+)?$", re.IGNORECASE)
+_ENST_RE = re.compile(r"^ENST\d{11}(\.\d+)?$", re.IGNORECASE)
+
 
 class IDMapping:
     """Result of gene ID resolution.  Behaves like a dict of {input_id: systematic_name}.
@@ -136,6 +140,9 @@ class SequenceDB:
         self._sys_names: set[str] = set()
         # Also keep canonical-case mapping for fast lookup
         self._sys_upper_to_canonical: dict[str, str] = {}
+        # Human-specific lookups: ENST→ENSG, Entrez→ENSG
+        self._enst_to_sys: dict[str, str] = {}
+        self._entrez_to_sys: dict[str, str] = {}
 
         for _, row in self._gene_map.iterrows():
             sysname = row["systematic_name"]
@@ -152,6 +159,20 @@ class SequenceDB:
                         common, self._common_to_sys[common_upper], sysname,
                     )
                 self._common_to_sys[common_upper] = sysname
+
+            # Human-specific: Ensembl transcript → systematic name (ENSG)
+            enst = row.get("ensembl_transcript", "")
+            if pd.notna(enst) and enst:
+                # Store both with and without version for flexible matching
+                enst_upper = str(enst).upper()
+                self._enst_to_sys[enst_upper] = sysname
+                enst_base = enst_upper.split(".")[0]
+                self._enst_to_sys[enst_base] = sysname
+
+            # Human-specific: Entrez ID → systematic name (ENSG)
+            entrez = row.get("entrez_id", "")
+            if pd.notna(entrez) and str(entrez).strip():
+                self._entrez_to_sys[str(entrez).strip()] = sysname
 
         # Load CDS sequences lazily
         self._sequences: dict[str, str] | None = None
@@ -230,20 +251,54 @@ class SequenceDB:
         """Resolve a single gene ID to systematic name."""
         upper = gene_id.upper()
 
-        # Check if it's a yeast systematic name
-        if _YEAST_SYSTEMATIC_RE.match(gene_id):
-            canonical = self._sys_upper_to_canonical.get(upper)
-            if canonical is not None:
-                return canonical
-            return None
+        # ── Yeast-specific patterns ──────────────────────────────────────
+        if self.species == "yeast":
+            if _YEAST_SYSTEMATIC_RE.match(gene_id):
+                canonical = self._sys_upper_to_canonical.get(upper)
+                if canonical is not None:
+                    return canonical
+                return None
 
-        # Check for Ensembl ID (not supported for yeast)
-        if upper.startswith("ENSG") or upper.startswith("ENSMUSG"):
-            logger.warning(
-                "Ensembl IDs not supported for yeast: %s", gene_id
-            )
-            return None
+            # Ensembl IDs not applicable for yeast
+            if upper.startswith("ENSG") or upper.startswith("ENSMUSG"):
+                logger.warning(
+                    "Ensembl IDs not supported for yeast: %s", gene_id
+                )
+                return None
 
+        # ── Human-specific patterns ──────────────────────────────────────
+        if self.species == "human":
+            # ENSG (Ensembl gene ID) — this IS the systematic_name for human
+            if _ENSG_RE.match(upper):
+                # Try with version first, then base
+                canonical = self._sys_upper_to_canonical.get(upper)
+                if canonical is not None:
+                    return canonical
+                base = upper.split(".")[0]
+                canonical = self._sys_upper_to_canonical.get(base)
+                if canonical is not None:
+                    return canonical
+                return None
+
+            # ENST (Ensembl transcript ID) → map to ENSG
+            if _ENST_RE.match(upper):
+                sys_name = self._enst_to_sys.get(upper)
+                if sys_name is not None:
+                    return sys_name
+                base = upper.split(".")[0]
+                sys_name = self._enst_to_sys.get(base)
+                if sys_name is not None:
+                    return sys_name
+                return None
+
+            # Pure numeric → try Entrez ID
+            if gene_id.strip().isdigit():
+                sys_name = self._entrez_to_sys.get(gene_id.strip())
+                if sys_name is not None:
+                    return sys_name
+                return None
+
+        # ── Generic lookups (both species) ───────────────────────────────
         # Try common name lookup (case-insensitive)
         if upper in self._common_to_sys:
             return self._common_to_sys[upper]
