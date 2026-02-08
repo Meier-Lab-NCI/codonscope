@@ -1,7 +1,7 @@
 # CodonScope Implementation Status
 
-Last updated: 2026-02-07
-338 tests passing + 6 skipped. 23 commits on main. Version 0.1.0.
+Last updated: 2026-02-08
+338 tests passing + 6 skipped. 31 commits on main. Version 0.1.0.
 
 ---
 
@@ -355,6 +355,18 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 - **Colab zip download** — report cell downloads zip instead of bare HTML
 - **Colab notebook UX** — tissue/cell line dropdowns (GTEx tissues + common cell lines), parameter descriptions for KMER_SIZE (mono/di/tricodon), BACKGROUND (all vs matched), METHOD (wtai vs tai), expanded interpretation guide with parameter table, expression file format example
 
+### Chunk 13: Pilot Gene Lists + Colab UX
+- **6 pilot gene list files** in `examples/` with documented expected results:
+  - `yeast_rp_genes.txt` (132) — canonical translational selection, synonymous-driven
+  - `yeast_gcn4_targets.txt` (55) — amino acid biosynthesis, AA-driven Mode 5 signal
+  - `yeast_glycolytic.txt` (17) — glycolysis/fermentation, codon-optimized
+  - `human_rp_genes.txt` (94) — mammalian RP genes
+  - `human_collagen_genes.txt` (21) — Gly-X-Y repeats, strongest AA-driven signal
+  - `mouse_rp_genes.txt` (99) — parallels human RP results
+- **README "Pilot Gene Lists" section** — per-mode expected results tables, "which pilot to run first" guide
+- **Colab pilot set dropdown** — `PILOT_SET` selector auto-fills 6 preset gene lists plus "Custom" option
+- **Zip README.txt** — every exported zip includes pilot gene list reference
+
 ### Earlier Feature Additions (Chunks 7-9)
 - **CCLE cell line expression:** `download_ccle_expression()` downloads DepMap data. `--cell-line` CLI flag (e.g., HEK293T, HeLa, K562). Human only.
 - **Amino acid annotations:** `annotate_kmer()` adds AA labels to k-mers in results (e.g., "AAG (Lys)").
@@ -406,4 +418,6 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 - **Yeast Gcn4 targets (~59 mapped genes):** AGA-GAA dicodon Z=3.66 (all bg), Z=4.33 (matched bg, adj_p=9.6e-4). Top dicodon enrichment is GGT-containing (glycine). Mode 5 confirms Gly AA enrichment (AA-driven). Mode 4 shows FS transitions present.
 - **Yeast ribosomal proteins (~114 mapped genes):** Strong monocodon and dicodon bias. Mode 5: synonymous-driven RSCU deviations (translational selection). Mode 3: high optimality with visible ramp. Mode 4: high FF proportion, low FS enrichment (≤1.1). Mode 2: optimal codons (AAG, AGA, GCT) enriched in demand; rare codons (AGT, CTG, ATA) depleted. Z-scores moderate (~1.7) because RP genes dominate ~72% of genome demand.
 - **Human ribosomal proteins (14 genes):** Mode 1 monocodon shows significant codon bias.
+- **Human collagens (21 genes):** Strongest AA-driven signal — ~33% glycine (Gly-X-Y repeats) vs ~7% genome average. Mode 5 clearly AA-driven.
+- **Yeast glycolytic enzymes (17 genes):** Highly expressed, codon-optimized. Similar direction to RP genes.
 - **Cross-species RP orthologs:** Low RSCU correlation (mean r~0.13) between yeast and human RP genes, confirming different preferred codons (17/18 AAs). Both directions work.

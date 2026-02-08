@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**338 tests passing (+ 6 skipped pending re-download). 23 commits on main.**
+**338 tests passing (+ 6 skipped pending re-download). 31 commits on main.**
 
 ### Build progress
 
@@ -26,6 +26,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 10 | Mouse species support | ✅ Done |
 | 11 | Enhanced ID resolution + mouse data sources | ✅ Done |
 | 12 | Gene name display, full results export, Colab fixes | ✅ Done |
+| 13 | Pilot gene lists, Colab UX improvements | ✅ Done |
 
 ### What exists (files and what they do)
 
@@ -49,7 +50,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/modes/mode6_compare.py` — `run_compare()` cross-species comparison. Per-gene RSCU correlation between ortholog pairs. Gene-set vs genome-wide correlation distribution. Bootstrap Z-test + Mann-Whitney U. Divergent gene analysis (different preferred codons tracking tRNA pool differences). Scatter data per amino acid. Two-panel plot (correlation histogram + ranked bar chart).
 
 **Report:**
-- `codonscope/report.py` — `generate_report()` HTML report generator. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6) and produces a self-contained HTML file with inline CSS/plots. Gene summary with ID mapping table (Input ID → Gene Name → Ensembl/Systematic ID). Exports `{stem}_results.zip` containing HTML, data/*.tsv files, and README.txt documenting analysis parameters, gene list, file descriptions, and data sources. Expanded table limits (30 rows for composition/demand, all significant for Mode 5).
+- `codonscope/report.py` — `generate_report()` HTML report generator. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6) and produces a self-contained HTML file with inline CSS/plots. Gene summary with ID mapping table (Input ID → Gene Name → Ensembl/Systematic ID). Exports `{stem}_results.zip` containing HTML, data/*.tsv files, and README.txt documenting analysis parameters, gene list, file descriptions, pilot gene lists reference, and data sources. Expanded table limits (30 rows for composition/demand, all significant for Mode 5).
 
 **CLI:**
 - `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `composition`, `demand`, `profile`, `collision`, `disentangle`, `compare`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
@@ -108,7 +109,20 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - **Yeast Gcn4 targets (~59 mapped genes):** AGA-GAA dicodon Z=3.66 (all bg), Z=4.33 (matched bg, adj_p=9.6e-4). Top dicodon enrichment is GGT-containing (glycine). Mode 5 confirms Gly AA is enriched (AA-driven signal). Mode 4 shows FS transitions present.
 - **Yeast ribosomal proteins (~114 mapped genes):** Strong monocodon and dicodon bias. Mode 5 confirms synonymous-driven RSCU deviations (translational selection). Mode 3 shows high optimality throughout with visible ramp. Mode 4 shows high FF proportion and low FS enrichment (≤1.1). Mode 2 shows optimal codons (AAG, AGA, GCT) enriched in demand vs genome; rare codons (AGT, CTG, ATA) depleted. Z-scores moderate (~1.7) because RP genes dominate ~72% of genome demand.
 - **Human ribosomal proteins (14 genes):** Mode 1 monocodon shows significant codon bias.
+- **Human collagens (21 genes):** Strongest AA-driven signal — ~33% glycine (Gly-X-Y repeats) vs ~7% genome average. Mode 5 clearly AA-driven.
+- **Yeast glycolytic enzymes (17 genes):** Highly expressed, codon-optimized. Similar direction to RP genes but fewer reach significance due to small N.
 - **Cross-species RP orthologs:** Low RSCU correlation (mean r~0.13) between yeast and human RP genes, confirming different preferred codons (17/18 AAs have different preferred codons). Both directions work (yeast→human and human→yeast).
+
+### Pilot gene lists (in `examples/`)
+
+| File | Species | Genes | Expected signal |
+|------|---------|-------|-----------------|
+| `yeast_rp_genes.txt` | yeast | 132 | Synonymous-driven (Mode 5), high optimality + ramp (Mode 3), low collision (Mode 4) |
+| `yeast_gcn4_targets.txt` | yeast | 55 | AA-driven (Mode 5): glycine/arginine enriched. Contrast with RP genes. |
+| `yeast_glycolytic.txt` | yeast | 17 | Codon-optimized like RP genes, small N limits significance |
+| `human_rp_genes.txt` | human | 94 | Codon bias with different preferred codons than yeast |
+| `human_collagen_genes.txt` | human | 21 | Strongest AA-driven signal (Gly-X-Y repeats) |
+| `mouse_rp_genes.txt` | mouse | 99 | Parallels human RP results (same mammalian tRNA pools) |
 
 ### Known issues
 
