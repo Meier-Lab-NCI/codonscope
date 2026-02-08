@@ -1,7 +1,6 @@
 """Data download and pre-computation infrastructure for CodonScope.
 
-Currently supports yeast (S. cerevisiae). Designed for easy extension
-to human and mouse.
+Currently supports yeast (S. cerevisiae), human, and mouse (M. musculus).
 """
 
 import gzip
@@ -115,6 +114,18 @@ ENSEMBL_HUMAN_CDS_URL = (
 # GtRNAdb human tRNA
 GTRNADB_HUMAN_URL = (
     "http://gtrnadb.ucsc.edu/genomes/eukaryota/Hsapi38/hg38-mature-tRNAs.fa"
+)
+
+# ── Mouse download URLs ────────────────────────────────────────────────────
+# Ensembl CDS FASTA — all mouse transcripts, we keep longest per gene
+ENSEMBL_MOUSE_CDS_URL = (
+    "https://ftp.ensembl.org/pub/current_fasta/mus_musculus/cds/"
+    "Mus_musculus.GRCm39.cds.all.fa.gz"
+)
+
+# GtRNAdb mouse tRNA
+GTRNADB_MOUSE_URL = (
+    "http://gtrnadb.ucsc.edu/genomes/eukaryota/Mmusc39/mm39-mature-tRNAs.fa"
 )
 
 # ── Fallback tRNA gene copy numbers (Phizicky & Hopper 2010, Chan et al. 2010)
@@ -313,6 +324,86 @@ HUMAN_TRNA_FALLBACK: dict[str, tuple[str, int]] = {
     "UUU": ("Lys", 14),
 }
 
+# ── Mouse tRNA gene copy numbers fallback (GtRNAdb mm39, ~430 genes) ──────
+# Aggregated by anticodon. Source: Chan & Lowe 2016 / GtRNAdb mm39 build.
+# Mouse tRNA copy numbers are very similar to human (both mammalian).
+MOUSE_TRNA_FALLBACK: dict[str, tuple[str, int]] = {
+    "AAC": ("Val", 5),
+    "AAG": ("Leu", 5),
+    "AAU": ("Ile", 5),
+    "ACA": ("Cys", 28),
+    "ACC": ("Gly", 9),
+    "ACG": ("Arg", 6),
+    "ACU": ("Ser", 5),
+    "AGC": ("Ala", 28),
+    "AGG": ("Pro", 10),
+    "AGU": ("Thr", 7),
+    "AUC": ("Asp", 18),
+    "AUG": ("His", 10),
+    "AUU": ("Asn", 30),
+    "CAA": ("Leu", 7),
+    "CAC": ("Val", 10),
+    "CAG": ("Leu", 9),
+    "CAU": ("Ile", 5),
+    "CCA": ("Trp", 7),
+    "CCC": ("Gly", 9),
+    "CCG": ("Arg", 4),
+    "CCU": ("Arg", 5),
+    "CGC": ("Ala", 5),
+    "CGG": ("Pro", 4),
+    "CGU": ("Thr", 5),
+    "CUC": ("Glu", 11),
+    "CUG": ("Gln", 18),
+    "CUU": ("Lys", 15),
+    "GAA": ("Phe", 7),
+    "GAC": ("Val", 9),
+    "GAG": ("Leu", 4),
+    "GAU": ("Ile", 5),
+    "GCA": ("Cys", 0),
+    "GCC": ("Gly", 11),
+    "GCU": ("Ser", 6),
+    "GGC": ("Ala", 5),
+    "GGG": ("Pro", 0),
+    "GGU": ("Thr", 6),
+    "GUC": ("Asp", 6),
+    "GUG": ("His", 3),
+    "GUU": ("Asn", 5),
+    "UCU": ("Arg", 5),
+    "UGC": ("Ala", 9),
+    "UGG": ("Pro", 5),
+    "UGU": ("Thr", 5),
+    "UUC": ("Glu", 6),
+    "UUG": ("Gln", 4),
+    "UUU": ("Lys", 13),
+}
+
+# ── Mouse highly-expressed genes (general) ──────────────────────────────
+# Approximate TPM values based on mouse RNA-seq literature.
+# Mouse gene names use Title Case (Rpl*/Rps* for RP genes).
+MOUSE_HIGH_EXPRESSION: dict[str, float] = {
+    # Glycolytic enzymes
+    "Gapdh": 3000, "Eno1": 2000, "Pgk1": 2000,
+    "Aldoa": 2000, "Tpi1": 1500, "Pkm": 1500,
+    "Pfkl": 500, "Hk1": 500, "Hk2": 500,
+    "Gpi1": 500, "Pgam1": 1000, "Ldha": 1500,
+    # Translation factors
+    "Eef1a1": 3000, "Eef2": 2000,
+    "Eif4a1": 1000, "Eif2s1": 500,
+    # Chaperones
+    "Hspa8": 1500, "Hspa5": 1000, "Hsp90aa1": 1200,
+    "Hsp90ab1": 1200, "Hspd1": 800,
+    # Cytoskeleton / structural
+    "Actb": 5000, "Actg1": 2000,
+    "Tuba1a": 500, "Tubb4b": 500, "Tubb5": 500,
+    # Histones
+    "H3c1": 300, "H4c1": 300, "H2ac1": 300, "H2bc1": 300,
+    # Other abundant
+    "Ubb": 500, "Ubc": 500,
+    "Fasn": 400, "Hmgcr": 300,
+    "Ppia": 1500, "Ppib": 800,
+    "Rplp0": 3000, "Rplp1": 3000, "Rplp2": 3000,
+}
+
 # ── Human wobble decoding rules (standard eukaryotic) ────────────────────────
 # Very similar to yeast with human-specific modification enzyme names.
 # ALKBH8 is the human homolog of yeast Trm9 (mcm5U/mcm5s2U modifications).
@@ -420,6 +511,7 @@ def download(species: str, data_dir: str | Path | None = None) -> Path:
     dispatchers = {
         "yeast": _download_yeast,
         "human": _download_human,
+        "mouse": _download_mouse,
     }
     if species not in dispatchers:
         raise ValueError(
@@ -1120,6 +1212,263 @@ def _download_human_trna(species_dir: Path) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Mouse-specific download
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _download_mouse(species_dir: Path) -> None:
+    """Download and process all mouse reference data.
+
+    Steps:
+    1. Download Ensembl CDS FASTA, keep longest valid CDS per gene
+    2. Download tRNA gene copy numbers from GtRNAdb (with fallback)
+    3. Save wobble decoding rules (reuse human/mammalian rules)
+    4. Pre-compute backgrounds
+    5. Create expression estimates (hardcoded)
+    """
+    # 1. CDS sequences from Ensembl
+    sequences, gene_map = _download_mouse_cds(species_dir)
+
+    # 2. tRNA gene copy numbers
+    _download_mouse_trna(species_dir)
+
+    # 3. Wobble rules (same mammalian modifications as human)
+    _save_wobble_rules(species_dir, wobble_rules=HUMAN_WOBBLE_RULES)
+
+    # 4. Pre-compute backgrounds
+    _compute_backgrounds(species_dir, sequences)
+
+    # 5. Create expression estimates
+    _create_mouse_expression(species_dir)
+
+    logger.info("Mouse download complete. Files in %s", species_dir)
+
+
+def _download_mouse_cds(
+    species_dir: Path,
+) -> tuple[dict[str, str], pd.DataFrame]:
+    """Download mouse CDS sequences from Ensembl and build gene ID map.
+
+    For each gene (ENSMUSG), keeps the longest valid CDS (no MANE for mouse).
+    Validates: ACGT only, divisible by 3, starts ATG, ends stop, no internal stops.
+
+    Returns:
+        (sequences dict {ensmusg_id: cds}, gene_map DataFrame)
+    """
+    logger.info("Downloading mouse CDS from Ensembl...")
+    resp = requests.get(ENSEMBL_MOUSE_CDS_URL, timeout=600, stream=True)
+    resp.raise_for_status()
+
+    raw_fasta = gzip.decompress(resp.content).decode("ascii", errors="replace")
+    logger.info("Downloaded Ensembl mouse CDS FASTA, parsing...")
+
+    sequences, records = _parse_ensembl_mouse_cds(raw_fasta)
+    logger.info("Validated %d mouse protein-coding genes", len(sequences))
+
+    # Save cleaned FASTA
+    cds_path = species_dir / "cds_sequences.fa.gz"
+    with gzip.open(cds_path, "wt") as fh:
+        for ensmusg, seq in sorted(sequences.items()):
+            fh.write(f">{ensmusg}\n{seq}\n")
+    logger.info("Saved %d validated CDS to %s", len(sequences), cds_path)
+
+    # Save gene ID map
+    gene_map = pd.DataFrame(records)
+    gene_map.to_csv(species_dir / "gene_id_map.tsv", sep="\t", index=False)
+    logger.info("Saved gene ID map with %d entries", len(gene_map))
+
+    return sequences, gene_map
+
+
+def _parse_ensembl_mouse_cds(
+    fasta_text: str,
+) -> tuple[dict[str, str], list[dict]]:
+    """Parse Ensembl mouse CDS FASTA, keeping longest valid CDS per gene.
+
+    Ensembl CDS headers look like:
+    >ENSMUST00000... cds chromosome:GRCm39:... gene:ENSMUSG00000... gene_symbol:Xyz ...
+
+    Returns:
+        (sequences dict {ensmusg_id: cds}, list of record dicts for gene_id_map)
+    """
+    stop_codons = {"TAA", "TAG", "TGA"}
+
+    # Collect all valid CDS per gene, keep longest
+    gene_candidates: dict[str, list[tuple[str, str, str]]] = {}  # ENSMUSG → [(ensmust, symbol, cds), ...]
+
+    current_ensmust: str | None = None
+    current_header: str = ""
+    current_seq_parts: list[str] = []
+
+    def _process_entry(header: str, seq: str) -> None:
+        # Extract ENSMUST ID
+        ensmust = header.split()[0]
+        ensmust_base = ensmust.split(".")[0]
+
+        # Extract ENSMUSG from header
+        gene_match = re.search(r"gene:(ENSMUSG\d+(\.\d+)?)", header)
+        if not gene_match:
+            return
+        ensmusg = gene_match.group(1).split(".")[0]
+
+        # Extract gene symbol
+        symbol_match = re.search(r"gene_symbol:(\S+)", header)
+        symbol = symbol_match.group(1) if symbol_match else ""
+
+        seq_upper = seq.upper()
+
+        # Validate: only ACGT
+        if not re.fullmatch(r"[ACGT]+", seq_upper):
+            return
+
+        # Validate: divisible by 3
+        if len(seq_upper) % 3 != 0:
+            return
+
+        # Validate: starts with ATG
+        if not seq_upper.startswith("ATG"):
+            return
+
+        # Validate: ends with stop codon
+        if seq_upper[-3:] not in stop_codons:
+            return
+
+        # Strip stop codon
+        cds = seq_upper[:-3]
+
+        # Check for internal stop codons
+        for i in range(0, len(cds), 3):
+            if cds[i : i + 3] in stop_codons:
+                return
+
+        if len(cds) < 9:  # at least 3 codons
+            return
+
+        if ensmusg not in gene_candidates:
+            gene_candidates[ensmusg] = []
+        gene_candidates[ensmusg].append((ensmust_base, symbol, cds))
+
+    for line in fasta_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith(">"):
+            if current_ensmust is not None:
+                _process_entry(current_header, "".join(current_seq_parts))
+            current_header = line[1:]
+            current_ensmust = current_header.split()[0]
+            current_seq_parts = []
+        else:
+            current_seq_parts.append(line)
+
+    # Process last entry
+    if current_ensmust is not None:
+        _process_entry(current_header, "".join(current_seq_parts))
+
+    # Keep longest CDS per gene
+    sequences: dict[str, str] = {}
+    records: list[dict] = []
+
+    for ensmusg, candidates in gene_candidates.items():
+        # Sort by CDS length descending, take longest
+        candidates.sort(key=lambda x: len(x[2]), reverse=True)
+        ensmust, symbol, cds = candidates[0]
+
+        gc_count = cds.count("G") + cds.count("C")
+        gc_content = gc_count / len(cds) if len(cds) > 0 else 0.0
+
+        sequences[ensmusg] = cds
+        records.append({
+            "systematic_name": ensmusg,
+            "common_name": symbol,
+            "ensembl_transcript": ensmust,
+            "cds_length": len(cds),
+            "gc_content": round(gc_content, 4),
+        })
+
+    return sequences, records
+
+
+def _download_mouse_trna(species_dir: Path) -> None:
+    """Download mouse tRNA gene copy numbers from GtRNAdb, with fallback."""
+    trna_path = species_dir / "trna_copy_numbers.tsv"
+
+    try:
+        logger.info("Downloading mouse tRNA data from GtRNAdb...")
+        resp = requests.get(GTRNADB_MOUSE_URL, timeout=60)
+        resp.raise_for_status()
+        trna_counts = _parse_gtrnadb_fasta(resp.text)
+        if len(trna_counts) < 20:
+            raise ValueError(
+                f"Only parsed {len(trna_counts)} tRNA anticodons, expected ~40+"
+            )
+        logger.info("Parsed %d tRNA anticodons from GtRNAdb", len(trna_counts))
+    except Exception as exc:
+        logger.warning(
+            "GtRNAdb download failed (%s), using hardcoded fallback", exc
+        )
+        trna_counts = {
+            anticodon: {"amino_acid": aa, "gene_count": count}
+            for anticodon, (aa, count) in MOUSE_TRNA_FALLBACK.items()
+        }
+
+    rows = []
+    for anticodon, info in sorted(trna_counts.items()):
+        rows.append({
+            "anticodon": anticodon,
+            "amino_acid": info["amino_acid"],
+            "gene_count": info["gene_count"],
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(trna_path, sep="\t", index=False)
+    logger.info("Saved mouse tRNA copy numbers to %s", trna_path)
+
+
+def _create_mouse_expression(species_dir: Path) -> None:
+    """Create mouse expression estimates.
+
+    Assigns approximate TPM values:
+    - Rpl*/Rps* ribosomal proteins → 3000 TPM
+    - Known highly-expressed genes → specific values from MOUSE_HIGH_EXPRESSION
+    - Other genes → 15 TPM (median gene)
+
+    Saves: expression_estimates.tsv (systematic_name, common_name, tpm)
+    """
+    expr_path = species_dir / "expression_estimates.tsv"
+
+    gene_map = pd.read_csv(species_dir / "gene_id_map.tsv", sep="\t")
+    rows = []
+
+    for _, row in gene_map.iterrows():
+        sys_name = row["systematic_name"]
+        common = row["common_name"]
+
+        # Determine TPM
+        if isinstance(common, str) and common in MOUSE_HIGH_EXPRESSION:
+            tpm = MOUSE_HIGH_EXPRESSION[common]
+        elif isinstance(common, str) and (
+            common.startswith("Rpl") or common.startswith("Rps")
+        ):
+            tpm = 3000.0
+        else:
+            tpm = 15.0
+
+        rows.append({
+            "systematic_name": sys_name,
+            "common_name": common,
+            "tpm": tpm,
+        })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(expr_path, sep="\t", index=False)
+    logger.info(
+        "Created mouse expression estimates: %d genes, "
+        "mean TPM %.1f, saved to %s",
+        len(df), df["tpm"].mean(), expr_path,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Expression data
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1614,6 +1963,8 @@ def download_expression(
         _create_yeast_expression(species_dir)
     elif species == "human":
         _download_human_expression(species_dir)
+    elif species == "mouse":
+        _create_mouse_expression(species_dir)
     else:
         raise ValueError(f"Unsupported species for expression: {species!r}")
 

@@ -1,0 +1,20 @@
+# Yeast (S. cerevisiae) tRNA modification enzymes
+# Source: Phizicky & Hopper 2010 (Genes Dev 24:1832-60)
+# These enzymes modify tRNA nucleosides and affect codon decoding efficiency.
+# Count: 16
+TRM1
+TRM2
+TRM3
+TRM4
+TRM5
+TRM7
+TRM8
+TRM9
+TRM10
+TRM11
+TRM12
+TRM13
+TRM44
+TRM82
+TAD1
+TAD2

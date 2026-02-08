@@ -20,6 +20,10 @@ _YEAST_SYSTEMATIC_RE = re.compile(
 _ENSG_RE = re.compile(r"^ENSG\d{11}(\.\d+)?$", re.IGNORECASE)
 _ENST_RE = re.compile(r"^ENST\d{11}(\.\d+)?$", re.IGNORECASE)
 
+# Mouse/Ensembl ID patterns
+_ENSMUSG_RE = re.compile(r"^ENSMUSG\d{11}(\.\d+)?$", re.IGNORECASE)
+_ENSMUST_RE = re.compile(r"^ENSMUST\d{11}(\.\d+)?$", re.IGNORECASE)
+
 
 class IDMapping:
     """Result of gene ID resolution.  Behaves like a dict of {input_id: systematic_name}.
@@ -318,7 +322,31 @@ class SequenceDB:
                     return sys_name
                 return None
 
-        # ── Generic lookups (both species) ───────────────────────────────
+        # ── Mouse-specific patterns ──────────────────────────────────────
+        if self.species == "mouse":
+            # ENSMUSG (Ensembl mouse gene ID) — this IS the systematic_name
+            if _ENSMUSG_RE.match(upper):
+                canonical = self._sys_upper_to_canonical.get(upper)
+                if canonical is not None:
+                    return canonical
+                base = upper.split(".")[0]
+                canonical = self._sys_upper_to_canonical.get(base)
+                if canonical is not None:
+                    return canonical
+                return None
+
+            # ENSMUST (Ensembl mouse transcript ID) → map to ENSMUSG
+            if _ENSMUST_RE.match(upper):
+                sys_name = self._enst_to_sys.get(upper)
+                if sys_name is not None:
+                    return sys_name
+                base = upper.split(".")[0]
+                sys_name = self._enst_to_sys.get(base)
+                if sys_name is not None:
+                    return sys_name
+                return None
+
+        # ── Generic lookups (all species) ────────────────────────────────
         # Try common name lookup (case-insensitive)
         if upper in self._common_to_sys:
             return self._common_to_sys[upper]

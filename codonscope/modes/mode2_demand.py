@@ -200,6 +200,10 @@ def _load_expression(
             return _load_human_expression(species_dir, tissue=tissue)
         # Default: HEK293T (proxy: Kidney - Cortex)
         return _load_ccle_expression(species_dir, "HEK293T")
+    elif species == "mouse":
+        if cell_line:
+            raise ValueError("Cell line expression not available for mouse.")
+        return _load_mouse_expression(species_dir)
     else:
         raise ValueError(f"No expression data for species: {species!r}")
 
@@ -218,6 +222,22 @@ def _load_yeast_expression(
     df = pd.read_csv(expr_path, sep="\t")
     expr = dict(zip(df["systematic_name"], df["tpm"]))
     return expr, "rich_media", ["rich_media"]
+
+
+def _load_mouse_expression(
+    species_dir: Path,
+) -> tuple[dict[str, float], str, list[str]]:
+    """Load mouse expression estimates."""
+    expr_path = species_dir / "expression_estimates.tsv"
+    if not expr_path.exists():
+        raise FileNotFoundError(
+            f"Expression data not found: {expr_path}. "
+            f"Run: codonscope download --species mouse"
+        )
+
+    df = pd.read_csv(expr_path, sep="\t")
+    expr = dict(zip(df["systematic_name"], df["tpm"]))
+    return expr, "estimates", ["estimates"]
 
 
 def _load_human_expression(

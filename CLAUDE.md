@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**269 tests passing. 14 commits on main.**
+**269 tests passing. 15 commits on main.**
 
 ### Build progress
 
@@ -23,19 +23,20 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 7 | Mode 2 (translational demand) | ✅ Done |
 | 8 | Mode 6 (cross-species comparison) | ✅ Done |
 | 9 | HTML report generation | ✅ Done |
+| 10 | Mouse species support | ✅ Done |
 
 ### What exists (files and what they do)
 
 **Core engine:**
 - `codonscope/__init__.py` — version 0.1.0
 - `codonscope/core/codons.py` — k-mer counting engine (mono/di/tri), `sequence_to_codons()`, `count_kmers()`, `kmer_frequencies()`, `all_possible_kmers()`, `SENSE_CODONS` (61 sense codons)
-- `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Resolves yeast (systematic name, common name) and human (HGNC symbol, ENSG, ENST, Entrez ID) gene identifiers. `get_sequences()` accepts IDMapping, dict, or list[str].
+- `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Resolves yeast (systematic name, common name), human (HGNC symbol, ENSG, ENST, Entrez ID), and mouse (MGI symbol, ENSMUSG, ENSMUST) gene identifiers. `get_sequences()` accepts IDMapping, dict, or list[str].
 - `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline
 - `codonscope/core/optimality.py` — `OptimalityScorer` class: loads wobble_rules.tsv, computes per-codon tAI and wtAI weights (normalised 0–1, pseudocount for zero-copy anticodons). Provides `gene_tai()`, `gene_wtai()`, `per_position_scores()`, `smooth_profile()`, `classify_codons()` (fast/slow by median threshold).
 - `codonscope/core/orthologs.py` — `OrthologDB` class: bidirectional gene mapping between species. Loads TSV from `~/.codonscope/data/orthologs/`. `map_genes()`, `get_all_pairs()`, `n_pairs`.
 
 **Data layer:**
-- `codonscope/data/download.py` — `download("yeast")` and `download("human")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds, creates expression data. Curated wobble rule tables for both species. Also: `download_expression()` standalone, `download_orthologs()` for cross-species ortholog mapping. Yeast expression from hardcoded rich-media estimates, human expression from GTEx v8 median TPM.
+- `codonscope/data/download.py` — `download("yeast")`, `download("human")`, and `download("mouse")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds, creates expression data. Curated wobble rule tables for all species (mouse reuses human/mammalian rules). Also: `download_expression()` standalone, `download_orthologs()` for cross-species ortholog mapping. Yeast expression from hardcoded rich-media estimates, human expression from GTEx v8 median TPM, mouse expression from hardcoded estimates.
 
 **Analysis modes:**
 - `codonscope/modes/mode1_composition.py` — `run_composition()` with "all" or "matched" (length+GC) backgrounds, KS diagnostics, volcano + bar chart plots. Accepts k=1/2/3 (aliases: `kmer`, `kmer_size`).
@@ -79,6 +80,14 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - Expression: GTEx v8 median TPM per tissue (`expression_gtex.tsv.gz`), ~56K genes × 54 tissues
 - Same file structure as yeast plus `expression_gtex.tsv.gz`
 
+**Mouse (M. musculus):**
+- ~21,500 validated CDS from Ensembl GRCm39 (longest CDS per gene)
+- Gene ID map includes: systematic_name (ENSMUSG), common_name (MGI symbol), ensembl_transcript (ENSMUST)
+- tRNA: hardcoded fallback (GtRNAdb parse fails), same mammalian counts as human
+- Wobble rules: reuses human/mammalian rules (same modification machinery)
+- Expression: `expression_estimates.tsv` — hardcoded TPM estimates (RP genes 3000, Actb 5000, Gapdh 3000, median 15)
+- Files: same structure as yeast plus `expression_estimates.tsv`
+
 **Orthologs (in `~/.codonscope/data/orthologs/`):**
 - `human_yeast.tsv` — 830 one-to-one ortholog pairs (human ENSG → yeast systematic name)
 - Built via name matching + curated renames (~150 entries including RP paralog mapping: human RPL11 → yeast RPL11A)
@@ -102,6 +111,9 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 6. **Yeast expression is approximate.** Hardcoded TPM estimates, not measured. RP genes assigned uniform 3000 TPM (real values vary by paralog). RP genes end up as ~72% of genome demand; real fraction is ~30-40%. This makes Mode 2 Z-scores modest for RP genes since they dominate both gene-set and genome demand. GTEx human expression is real measured data.
 7. **Ortholog mapping is name-based.** BioMart query fails (Ensembl filter name changed). Using gene name matching + 150 curated renames instead. Covers 830 human-yeast pairs. True Ensembl Compara orthologs would give better coverage (~1200+ pairs). Fix BioMart XML query when possible.
 8. **RP paralog mapping is approximate.** Human RPL11 maps to yeast RPL11A (not RPL11B). In reality both paralogs are near-identical. The A-paralog convention is consistent but arbitrary.
+9. **Mouse has no MANE equivalent.** Uses longest valid CDS per gene from Ensembl GRCm39. Some genes may have non-canonical transcript selected.
+10. **Mouse orthologs not yet implemented.** Mode 6 cross-species comparison currently only supports human-yeast. Mouse-human/mouse-yeast ortholog tables could be added.
+11. **Mouse expression is estimated.** Hardcoded TPM approximations, not tissue-specific measured data. Cell line expression not available for mouse.
 
 ## Design decisions (read before coding)
 
@@ -112,7 +124,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 5. **Bootstrap Z-scores, not analytic.** Resample N genes from genome 10,000 times for SE estimation. Exception: tricodons use analytic SE (no per-gene matrix).
 6. **Benjamini-Hochberg correction** across all k-mers within each mode.
 7. **IDMapping class.** `resolve_ids()` returns an `IDMapping` object that behaves like `dict[input_id → systematic_name]`. Has `.unmapped`, `.n_mapped`, `.n_unmapped`. Backwards compat: `result["mapping"]` etc. still works.
-8. **Species-dispatched ID resolution.** Yeast uses regex for systematic names + case-insensitive common name lookup. Human uses ENSG/ENST regex, numeric Entrez lookup, and case-insensitive HGNC symbol lookup.
+8. **Species-dispatched ID resolution.** Yeast uses regex for systematic names + case-insensitive common name lookup. Human uses ENSG/ENST regex, numeric Entrez lookup, and case-insensitive HGNC symbol lookup. Mouse uses ENSMUSG/ENSMUST regex + case-insensitive MGI symbol lookup.
 9. **Mode 2 demand weighting.** Weight = TPM × n_codons per gene. Demand vector = weighted mean of per-gene codon frequencies. Weighted bootstrap: sample N genes, compute their weighted demand, repeat 10K times. Human uses GTEx tissue-specific TPM. Yeast uses hardcoded rich-media estimates.
 10. **Mode 6 RSCU correlation.** Per-gene RSCU computed for ortholog pairs. Pearson r uses only multi-synonym codons (excludes Met, Trp). Gene-set distribution compared to genome-wide via bootstrap Z-test and Mann-Whitney U. Divergent genes analysed for different preferred codons. Ortholog data stored separately in `~/.codonscope/data/orthologs/`.
 
@@ -122,6 +134,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 # Download reference data
 python3 -c "from codonscope.data.download import download; download('yeast')"
 python3 -c "from codonscope.data.download import download; download('human')"
+python3 -c "from codonscope.data.download import download; download('mouse')"
 
 # Run tests
 python3 -m pytest tests/ -v
@@ -146,6 +159,10 @@ python3 -m codonscope.cli disentangle --species yeast --genes genelist.txt
 python3 -c "from codonscope.data.download import download_orthologs; download_orthologs('human', 'yeast')"
 python3 -m codonscope.cli compare --species1 yeast --species2 human --genes genelist.txt
 python3 -m codonscope.cli compare --species1 yeast --species2 human --genes genelist.txt --from-species human
+
+# Mouse analysis
+python3 -m codonscope.cli report --species mouse --genes examples/mouse_rp_genes.txt --output mouse_rp_report.html
+python3 -m codonscope.cli composition --species mouse --genes examples/mouse_rp_genes.txt --kmer 1
 
 # Comprehensive HTML report (runs all modes)
 python3 -m codonscope.cli report --species yeast --genes genelist.txt --output report.html
