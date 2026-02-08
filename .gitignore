@@ -1,13 +1,35 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+*.egg
 dist/
 build/
+*.whl
 .pytest_cache/
 .eggs/
-*.egg
 .tox/
+
+# Virtual environments
 .venv/
 venv/
 env/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# CodonScope output
+*.html
+*_report_data/
+codonscope_output/
+
+# User files
+my_genes*.txt
+diagnostic.py
