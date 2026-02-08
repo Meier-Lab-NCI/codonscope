@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**338 tests passing (+ 6 skipped pending re-download). 15 commits on main.**
+**338 tests passing (+ 6 skipped pending re-download). 22 commits on main.**
 
 ### Build progress
 

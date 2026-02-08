@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codonscope"
+version = "0.1.0"
+description = "Multi-species codon usage analysis tool for gene lists"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    { name = "Meier Lab", email = "jordan.meier@nih.gov" },
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "requests",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+codonscope = "codonscope.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["codonscope*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

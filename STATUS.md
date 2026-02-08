@@ -1,25 +1,28 @@
 # CodonScope Implementation Status
 
 Last updated: 2026-02-07
-131 tests passing. 11 commits on main.
+338 tests passing + 6 skipped. 22 commits on main. Version 0.1.0.
 
 ---
 
 ## 1. What's Implemented and Tested
 
+All 6 analysis modes, 3 species, HTML report, and full CLI are complete.
+
 ### Core Engine
 
-**`codonscope/core/codons.py`** — K-mer counting engine. Fully implemented.
+**`codonscope/core/codons.py`** — K-mer counting engine with amino acid annotations.
 
 ```python
 SENSE_CODONS: list[str]                                    # 61 sense codons, sorted
 sequence_to_codons(sequence: str) -> list[str]
 count_kmers(sequence: str, k: int = 1) -> dict[str, int]
 kmer_frequencies(sequence: str, k: int = 1) -> dict[str, float]
+annotate_kmer(kmer: str, k: int = 1) -> str               # e.g. "AAG" → "AAG (Lys)"
 all_possible_kmers(k: int = 1, sense_only: bool = True) -> list[str]
 ```
 
-**`codonscope/core/sequences.py`** — Gene ID resolution and CDS retrieval. Fully implemented for yeast and human.
+**`codonscope/core/sequences.py`** — Gene ID resolution and CDS retrieval. Enhanced multi-type ID resolution with auto-detection.
 
 ```python
 class IDMapping:
@@ -40,7 +43,14 @@ class SequenceDB:
     @property species_dir -> Path
 ```
 
-**`codonscope/core/statistics.py`** — Bootstrap Z-scores, multiple testing, effect sizes. Fully implemented.
+ID types supported per species:
+- **Yeast:** systematic name (YFL039C), common name (ACT1), SGD ID (SGD:S000001855), UniProt (P60010)
+- **Human:** HGNC symbol (TP53), ENSG, ENST, Entrez ID (7157), RefSeq NM_ (NM_000546.6), UniProt (P04637), HGNC aliases
+- **Mouse:** MGI symbol (Actb), ENSMUSG, ENSMUST, MGI ID (MGI:87904), Entrez ID (11461), UniProt, MGI synonyms
+
+Mixed ID types per gene list are supported. Auto-detection via regex patterns with debug logging.
+
+**`codonscope/core/statistics.py`** — Bootstrap Z-scores, multiple testing, effect sizes.
 
 ```python
 compute_geneset_frequencies(sequences, k=1, trim_ramp=0) -> (per_gene_matrix, mean_vector, kmer_names)
@@ -53,216 +63,292 @@ diagnostic_ks_tests(geneset_lengths, geneset_gc, bg_lengths, bg_gc) -> dict
 compare_to_background(gene_sequences, background_npz_path, k=1, n_bootstrap=10000, trim_ramp=0, seed=None) -> pd.DataFrame
 ```
 
+**`codonscope/core/optimality.py`** — tAI and wobble-aware tAI scoring.
+
+```python
+class OptimalityScorer:
+    def __init__(self, species_dir: str | Path, wobble_penalty: float = 0.5)
+    def gene_tai(self, sequence: str) -> float
+    def gene_wtai(self, sequence: str) -> float
+    def per_position_scores(self, sequence: str, method: str = "wtai") -> np.ndarray
+    def smooth_profile(self, scores: np.ndarray, window: int = 10) -> np.ndarray
+    def classify_codons(self, threshold: float | None = None, method: str = "wtai") -> tuple[set, set]
+    @property tai_weights: dict[str, float]
+    @property wtai_weights: dict[str, float]
+```
+
+**`codonscope/core/orthologs.py`** — Bidirectional ortholog mapping.
+
+```python
+class OrthologDB:
+    def __init__(self, species1: str, species2: str, data_dir: str | Path | None = None)
+    def map_genes(self, gene_ids: list[str], from_species: str) -> dict[str, str]
+    def get_all_pairs(self) -> list[tuple[str, str]]
+    @property n_pairs: int
+```
+
 ### Data Layer
 
-**`codonscope/data/download.py`** — Downloads and pre-computes all reference data. Supports yeast and human.
+**`codonscope/data/download.py`** — Downloads and pre-computes all reference data.
 
 ```python
 download(species: str, data_dir: str | Path | None = None) -> Path
-# species: "yeast" or "human"
+download_expression(species: str, data_dir: str | Path | None = None) -> Path
+download_orthologs(species1: str, species2: str, data_dir: str | Path | None = None) -> Path
 ```
+
+Species support: yeast, human, mouse.
+
+Key internal functions:
+- `_parse_gtrnadb_fasta(fasta_text)` — 3-strategy parser: old (Type:/Anticodon:), modern (tRNA-Ala-AGC), compact (trna34-AlaAGC). T→U conversion. Skips iMet/SeC/Sup/Undet.
+- `_fetch_mouse_canonical_transcripts()` — BioMart canonical transcript query
+- `_fetch_mouse_entrez_ids()` — BioMart Entrez gene ID query
+- `_download_mgi_mapping()` — MGI ID/synonym mapping from JAX
+- `_download_uniprot_mapping()` — UniProt SwissProt mapping via BioMart (all species)
+- `_discover_compara_url()` — Auto-discover Ensembl Compara release URL
+- `_download_orthologs_compara()` — Bulk Ensembl Compara ortholog download
+- `download_ccle_expression()` — CCLE/DepMap cell line expression data (human only)
 
 ### Analysis Modes
 
-**`codonscope/modes/mode1_composition.py`** — Mode 1: Sequence Composition.
+**Mode 1: Composition** — `codonscope/modes/mode1_composition.py`
 
 ```python
 run_composition(
-    species: str,
-    gene_ids: list[str],
-    k: int | None = None,          # preferred parameter name
-    kmer: int | None = None,       # alias
-    kmer_size: int | None = None,  # alias
-    background: str = "all",       # "all" or "matched"
-    trim_ramp: int = 0,
+    species: str, gene_ids: list[str],
+    k: int | None = None,               # preferred; aliases: kmer, kmer_size
+    kmer: int | None = None,
+    kmer_size: int | None = None,
+    background: str = "all",             # "all" or "matched" (length+GC)
+    trim_ramp: int = 0,                  # skip first N codons from 5' end
     min_genes: int = 10,
     n_bootstrap: int = 10_000,
     output_dir: str | Path | None = None,
     seed: int | None = None,
     data_dir: str | Path | None = None,
 ) -> dict
+# Returns: results (DataFrame), diagnostics (dict), id_summary (IDMapping), n_genes (int)
+# DataFrame columns: kmer, observed_freq, expected_freq, z_score, p_value, adjusted_p, cohens_d
+# K-mers annotated with amino acids (e.g., "AAG (Lys)")
 ```
 
-Returns:
-```python
-{
-    "results": pd.DataFrame,    # columns: kmer, observed_freq, expected_freq, z_score, p_value, adjusted_p, cohens_d
-                                # sorted by |z_score| descending
-    "diagnostics": dict,        # keys: length_ks_stat, length_p, length_warning, gc_ks_stat, gc_p, gc_warning, power_warnings
-    "id_summary": IDMapping,    # NOT a plain dict — it's an IDMapping object
-    "n_genes": int,
-}
-```
+Features: mono/di/tricodon analysis, matched (length+GC) background, KS diagnostics, ramp trimming, amino acid annotations on k-mers, volcano + bar chart plots, gene name display.
 
-**`codonscope/modes/mode5_disentangle.py`** — Mode 5: AA vs Codon Disentanglement.
+**Mode 2: Translational Demand** — `codonscope/modes/mode2_demand.py`
 
 ```python
-CODON_TABLE: dict[str, str]        # codon -> 3-letter AA name, 61 entries
-AMINO_ACIDS: list[str]             # 20 amino acids, sorted alphabetically
-AA_FAMILIES: dict[str, list[str]]  # AA -> list of synonymous codons
-N_SYNONYMS: dict[str, int]         # AA -> number of synonymous codons
-
-run_disentangle(
-    species: str,
-    gene_ids: list[str],
+run_demand(
+    species: str, gene_ids: list[str],
+    k: int = 1,
+    tissue: str | None = None,           # GTEx tissue for human
+    cell_line: str | None = None,        # CCLE cell line for human
+    expression_file: str | Path | None = None,  # custom expression TSV
+    top_n: int | None = None,
     n_bootstrap: int = 10_000,
     seed: int | None = None,
     output_dir: str | Path | None = None,
     data_dir: str | Path | None = None,
 ) -> dict
+# Returns: results (DataFrame), top_genes (DataFrame), tissue (str), available_tissues (list),
+#          n_genes (int), id_summary (IDMapping)
 ```
 
-Returns:
+Features: expression-weighted codon demand, GTEx tissue-specific (human), CCLE cell line expression (human, e.g. HEK293T, HeLa, K562), custom expression file support, weighted bootstrap Z-scores, amino acid annotations, top demand-contributing genes.
+
+**Mode 3: Optimality Profile** — `codonscope/modes/mode3_profile.py`
+
 ```python
-{
-    "aa_results": pd.DataFrame,          # columns: amino_acid, observed_freq, expected_freq, z_score, p_value, adjusted_p
-    "rscu_results": pd.DataFrame,        # columns: codon, amino_acid, n_synonyms, observed_rscu, expected_rscu, z_score, p_value, adjusted_p
-    "attribution": pd.DataFrame,         # columns: codon, amino_acid, aa_z_score, rscu_z_score, aa_adj_p, rscu_adj_p, attribution
-                                         # attribution values: "AA-driven", "Synonymous-driven", "Both", "None"
-    "synonymous_drivers": pd.DataFrame,  # columns: codon, amino_acid, rscu_z_score, driver, gc3, decoding_type, trna_copies
-                                         # driver values: "tRNA_supply", "GC3_bias", "wobble_avoidance", "unclassified", "not_applicable"
-    "summary": {
-        "n_significant_codons": int,
-        "n_aa_driven": int,
-        "n_synonymous_driven": int,
-        "n_both": int,
-        "pct_aa_driven": float,          # 0-100
-        "pct_synonymous_driven": float,
-        "pct_both": float,
-        "summary_text": str,
-    },
-    "id_summary": IDMapping,
-    "n_genes": int,
-}
+run_profile(
+    species: str, gene_ids: list[str],
+    window: int = 10,
+    wobble_penalty: float = 0.5,
+    ramp_codons: int = 50,               # first N codons for ramp analysis
+    method: str = "wtai",                # "tai" or "wtai"
+    n_bootstrap: int = 1_000,
+    seed: int | None = None,
+    output_dir: str | Path | None = None,
+    data_dir: str | Path | None = None,
+) -> dict
+# Returns: metagene_geneset (ndarray), metagene_genome (ndarray), ramp_analysis (dict),
+#          ramp_composition (DataFrame), body_composition (DataFrame),
+#          per_gene_scores (DataFrame), scorer (OptimalityScorer), id_summary (IDMapping), n_genes (int)
 ```
+
+Features: per-position tAI/wtAI scoring, sliding window smoothing, normalised to 100 positional bins, ramp analysis (first N codons vs body), ramp codon composition breakdown, metagene line + ramp bar chart plots.
+
+**Mode 4: Collision Potential** — `codonscope/modes/mode4_collision.py`
+
+```python
+run_collision(
+    species: str, gene_ids: list[str],
+    wobble_penalty: float = 0.5,
+    threshold: float | None = None,      # custom fast/slow threshold
+    method: str = "wtai",
+    output_dir: str | Path | None = None,
+    data_dir: str | Path | None = None,
+) -> dict
+# Returns: transition_matrix_geneset (dict), transition_matrix_genome (dict),
+#          fs_enrichment (float), fs_sf_ratio_geneset (float), fs_sf_ratio_genome (float),
+#          chi2_stat (float), chi2_p (float), per_gene_fs_frac (DataFrame),
+#          fs_positions (DataFrame), fs_dicodons (DataFrame),
+#          fast_codons (set), slow_codons (set), threshold (float),
+#          id_summary (IDMapping), n_genes (int)
+```
+
+Features: FF/FS/SF/SS dicodon transition counting, FS enrichment ratio, per-dicodon FS enrichment analysis (`fs_dicodons` DataFrame), per-gene FS fractions, positional FS clustering, chi-squared test vs genome, transition bars + positional FS plots.
+
+**Mode 5: AA vs Codon Disentanglement** — `codonscope/modes/mode5_disentangle.py`
+
+```python
+run_disentangle(
+    species: str, gene_ids: list[str],
+    n_bootstrap: int = 10_000,
+    seed: int | None = None,
+    output_dir: str | Path | None = None,
+    data_dir: str | Path | None = None,
+) -> dict
+# Returns: aa_results (DataFrame), rscu_results (DataFrame), attribution (DataFrame),
+#          synonymous_drivers (DataFrame), summary (dict), id_summary (IDMapping), n_genes (int)
+# Attribution values: "AA-driven", "Synonymous-driven", "Both", "None"
+# Driver values: "tRNA_supply", "GC3_bias", "wobble_avoidance", "unclassified", "not_applicable"
+```
+
+Features: two-layer decomposition (AA composition + RSCU), per-codon attribution, synonymous driver classification (tRNA supply, GC3 bias, wobble avoidance), two-panel plot.
+
+**Mode 6: Cross-Species Comparison** — `codonscope/modes/mode6_compare.py`
+
+```python
+run_compare(
+    species1: str, species2: str, gene_ids: list[str],
+    from_species: str | None = None,     # which species gene IDs belong to
+    n_bootstrap: int = 10_000,
+    seed: int | None = None,
+    output_dir: str | Path | None = None,
+    data_dir: str | Path | None = None,
+) -> dict
+# Returns: per_gene (DataFrame), summary (dict), divergent_analysis (DataFrame),
+#          scatter_data (dict of {aa: DataFrame}), n_orthologs (int),
+#          n_genome_orthologs (int), from_species (str), to_species (str), id_summary (dict)
+```
+
+Features: per-gene RSCU correlation between ortholog pairs, gene-set vs genome-wide distribution, bootstrap Z-test + Mann-Whitney U, divergent gene analysis, scatter data per amino acid, bidirectional analysis (from_species parameter), correlation histogram + ranked bar chart plots.
+
+### Report
+
+**`codonscope/report.py`** — HTML report generator.
+
+```python
+generate_report(
+    species: str, gene_ids: list[str],
+    output: str | Path = "report.html",
+    species2: str | None = None,
+    tissue: str | None = None,
+    cell_line: str | None = None,
+    n_bootstrap: int = 10_000,
+    seed: int | None = None,
+    data_dir: str | Path | None = None,
+) -> Path
+```
+
+Self-contained HTML with inline CSS and base64-embedded matplotlib plots. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6). Includes gene summary, volcano plots, attribution table, metagene profile, collision bars, demand analysis, cross-species correlation (if species2 provided).
 
 ### CLI
 
-**`codonscope/cli.py`** — Three subcommands implemented.
+**`codonscope/cli.py`** — 8 subcommands.
 
 ```
-codonscope download   --species SPECIES [SPECIES ...] [--data-dir DIR]
-codonscope composition --species S --genes FILE --kmer {1,2,3} [--background {all,matched}]
-                       [--trim-ramp N] [--min-genes N] [--n-bootstrap N] [--output-dir DIR] [--seed N]
-codonscope disentangle --species S --genes FILE [--n-bootstrap N] [--output-dir DIR] [--seed N]
+codonscope download     --species SPECIES [SPECIES ...] [--data-dir DIR]
+codonscope report       --species S --genes FILE [--species2 S] [--tissue T] [--cell-line C] [--output FILE] [--n-bootstrap N] [--seed N] [--data-dir DIR]
+codonscope composition  --species S --genes FILE [--kmer {1,2,3}] [--background {all,matched}] [--trim-ramp N] [--min-genes N] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
+codonscope demand       --species S --genes FILE [--tissue T] [--cell-line C] [--expression-file FILE] [--top-n N] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
+codonscope profile      --species S --genes FILE [--window N] [--wobble-penalty P] [--ramp-codons N] [--method {tai,wtai}] [--output-dir DIR] [--data-dir DIR]
+codonscope collision    --species S --genes FILE [--wobble-penalty P] [--threshold T] [--method {tai,wtai}] [--output-dir DIR] [--data-dir DIR]
+codonscope disentangle  --species S --genes FILE [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
+codonscope compare      --species1 S --species2 S --genes FILE [--from-species S] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
 ```
 
 Gene list files support: one ID per line, comma-separated, tab-separated, `#` comments.
 
-### Tests
+### Tests (338 passing, 6 skipped)
 
 | File | Count | What it covers |
 |------|-------|----------------|
-| `tests/test_chunk1.py` | 23 | Yeast download files, ID mapping (systematic/common/case-insensitive), CDS validation, k-mer counting, background shapes |
-| `tests/test_statistics.py` | 29 | Bootstrap Z-scores, BH correction, Cohen's d, KS diagnostics, power check, compare_to_background pipeline, yeast positive controls (RP genes, YEF3) |
-| `tests/test_mode1.py` | 19 | Gene list parsing, run_composition pipeline (mono/di/matched/trim_ramp), diagnostics, unmapped gene reporting, CLI (help/version/composition), RP positive controls |
-| `tests/test_human.py` | 33 | Human download files (8 files), gene map structure/columns, CDS validation (div by 3, ATG start, no internal stops, ACGT only), ID resolution (HGNC/ENSG/ENST/Entrez/mixed/unmapped), background shapes, tRNA/wobble, Mode 1 on human RP genes |
-| `tests/test_mode5.py` | 27 | Codon table (61 codons, 20 AAs, family sizes), AA frequency computation, RSCU computation (equal/biased), attribution logic (AA-driven/synonymous/both/none), summary stats, Gcn4 integration (Gly enrichment), RP integration (synonymous-driven), CLI help |
-| **Total** | **131** | |
+| `tests/test_chunk1.py` | 23 | Yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds |
+| `tests/test_statistics.py` | 29 | Bootstrap Z-scores, BH correction, Cohen's d, KS diagnostics, power, yeast positive controls (RP, YEF3) |
+| `tests/test_mode1.py` | 19 | Gene list parsing, composition pipeline (mono/di/matched/trim_ramp), diagnostics, CLI, RP positive controls |
+| `tests/test_human.py` | 33 | Human download files, gene map structure/columns, CDS validation, ID resolution (HGNC/ENSG/ENST/Entrez), backgrounds, Mode 1 on human RP genes |
+| `tests/test_mode5.py` | 27 | Codon table, AA frequencies, RSCU, attribution logic, summary, Gcn4/RP integration, CLI |
+| `tests/test_mode3.py` | 26 | OptimalityScorer unit tests, metagene profile, ramp analysis, yeast RP integration, random gene negative control, CLI |
+| `tests/test_mode4.py` | 22 | Transition counting (FF/FS/SF/SS), proportions, FS enrichment, chi-squared, yeast RP integration, Gcn4 comparison, CLI |
+| `tests/test_mode2.py` | 36 | Demand vectors, expression loading (yeast + human GTEx), weighted bootstrap, yeast RP demand, Gcn4 demand, human liver demand, CLI |
+| `tests/test_mode6.py` | 36 | OrthologDB unit tests, RSCU correlation, ortholog download, RP comparison (yeast→human + human→yeast), divergent analysis, CLI |
+| `tests/test_report.py` | 18 | HTML report generation (RP + Gcn4), all mode sections, base64 images, gene summary, cross-species report, CLI |
+| `tests/test_id_resolution.py` | 75 (69+6skip) | GtRNAdb parser (3 formats), ID regex patterns, auto-detection, backward-compat resolution, new ID types (RefSeq, SGD, UniProt, MGI, Entrez), mixed ID lists, download function imports, ortholog dispatcher, parse unit tests, IDMapping compat |
+| **Total** | **338 + 6 skip** | |
 
-Note: `tests/test_chunks1_3.py` also exists (user's own validation script) but is not part of the main test suite.
-
----
-
-## 2. Actual Function Signatures (Where They Differ from Spec)
-
-### resolve_ids return type
-
-**Spec (CHUNK1_TASK.md):**
-```python
-def resolve_ids(self, gene_ids: list[str]) -> dict:
-    # Returns: {input_id: systematic_name}
-    # Also returns summary: n_mapped, n_unmapped, n_ambiguous
-```
-
-**Actual:**
-```python
-def resolve_ids(self, gene_ids: list[str]) -> IDMapping:
-```
-
-`IDMapping` is a custom class that behaves like `dict[input_id, systematic_name]` but also has `.n_mapped`, `.n_unmapped`, `.unmapped` attributes. This was a bug fix — the original implementation returned a nested dict `{"mapping": {...}, "n_mapped": int, ...}` which caused `len(result)` to return 4 (number of dict keys) instead of the mapped gene count.
-
-Backwards compat: `result["mapping"]`, `result["n_mapped"]`, `result["n_unmapped"]`, `result["unmapped"]` all still work via `__getitem__` override.
-
-### get_sequences parameter type
-
-**Spec:**
-```python
-def get_sequences(self, systematic_names: list[str]) -> dict[str, str]:
-```
-
-**Actual:**
-```python
-def get_sequences(self, names) -> dict[str, str]:
-    # accepts: IDMapping, dict, or list[str]
-```
-
-Changed to accept the `IDMapping` directly from `resolve_ids()`, avoiding the need to manually extract `.values()`. Also accepts a plain `dict` (uses values) or `list[str]`.
-
-### all_possible_kmers extra parameter
-
-**Spec:**
-```python
-def all_possible_kmers(k: int = 1) -> list[str]:
-```
-
-**Actual:**
-```python
-def all_possible_kmers(k: int = 1, sense_only: bool = True) -> list[str]:
-```
-
-Added `sense_only` parameter. Default `True` gives 61^k sense-only kmers. `False` would give all 64^k including stop codons.
-
-### run_composition (not in original spec by this name)
-
-The project spec says `CLI: codonscope composition` but doesn't specify the Python function name. The CHUNK1_TASK.md defines `codons.py` stubs. Mode 1 function is `run_composition()` with `k`/`kmer`/`kmer_size` aliases added after a bug report.
-
-### Human gene_id_map.tsv columns differ from yeast
-
-Yeast: `systematic_name, common_name, cds_length, gc_content, status`
-Human: `systematic_name, common_name, ensembl_transcript, refseq_transcript, entrez_id, cds_length, gc_content`
-
-The `get_gene_metadata()` method returns only the common 4 columns: `systematic_name, common_name, cds_length, gc_content`.
-
-### Human systematic_name is ENSG, not HGNC symbol
-
-For human, `systematic_name` = Ensembl gene ID (e.g. `ENSG00000187634`), not the HGNC symbol. HGNC symbol is in `common_name`. This differs from what you might expect — the "systematic" name is the stable Ensembl ID, the "common" name is the human-readable HGNC symbol.
+6 tests skipped: UniProt, MGI, SGD ID, and Entrez lookups need data re-download to populate new mapping files.
 
 ---
 
-## 3. Data Storage Paths
+## 2. Species Data (in `~/.codonscope/data/species/`)
 
-All data lives under `~/.codonscope/data/species/{species}/`.
+### Yeast (S. cerevisiae)
+- 6,685 validated ORFs from SGD (`orf_coding_all.fasta.gz`)
+- Mitochondrial ORFs (Q0*) excluded from backgrounds
+- Gene ID map columns: systematic_name, common_name, sgd_id, cds_length, gc_content, status
+- Additional mappings: `uniprot_mapping.tsv` (UniProt SwissProt via BioMart)
+- tRNA: 3-strategy GtRNAdb parser + hardcoded fallback (~275 genes)
+- Expression: `expression_rich_media.tsv` — hardcoded TPM estimates (RP 3000, glycolytic 500-5000, median 15, dubious 0.5)
 
-### Yeast (`~/.codonscope/data/species/yeast/`)
+### Human
+- 19,229 validated CDS from MANE Select v1.5 (NCBI summary + Ensembl CDS FASTA)
+- Gene ID map columns: systematic_name (ENSG), common_name (HGNC symbol), ensembl_transcript, refseq_transcript, entrez_id, cds_length, gc_content
+- Additional mappings: `uniprot_mapping.tsv` (UniProt SwissProt via BioMart)
+- tRNA: 3-strategy GtRNAdb parser + hardcoded fallback (~610 genes)
+- Expression: GTEx v8 median TPM per tissue (`expression_gtex.tsv.gz`, ~56K genes × 54 tissues)
+- CCLE: `expression_ccle.tsv.gz` + `ccle_cell_lines.tsv` (DepMap cell line expression, downloadable)
 
-| File | Size | Contents |
-|------|------|----------|
-| `cds_sequences.fa.gz` | 2.4 MB | 6,685 validated ORFs, stop codons stripped, keyed by systematic name (YAL001C) |
-| `gene_id_map.tsv` | 230 KB | Columns: systematic_name, common_name, cds_length, gc_content, status |
-| `trna_copy_numbers.tsv` | 537 B | Columns: anticodon, amino_acid, gene_count (hardcoded fallback data) |
-| `wobble_rules.tsv` | 1.7 KB | 61 rows. Columns: codon, amino_acid, decoding_anticodon, trna_gene_copies, decoding_type, modification_notes |
-| `background_mono.npz` | 647 KB | Keys: mean(61,), std(61,), per_gene(6685,61), kmer_names(61,), gene_names(6685,) |
-| `background_di.npz` | 3.6 MB | Keys: mean(3721,), std(3721,), per_gene(6685,3721), kmer_names(3721,), gene_names(6685,) |
-| `background_tri.npz` | 2.0 MB | Keys: mean(226981,), std(226981,), kmer_names(226981,), gene_names(6685,) — **NO per_gene** |
-| `gene_metadata.npz` | 54 KB | Keys: gene_names(6685,), cds_lengths(6685,), gc_contents(6685,) |
+### Mouse (M. musculus)
+- ~21,500 validated CDS from Ensembl GRCm39 (BioMart canonical transcripts preferred, longest CDS fallback)
+- Gene ID map columns: systematic_name (ENSMUSG), common_name (MGI symbol), ensembl_transcript (ENSMUST), entrez_id, cds_length, gc_content
+- Additional mappings: `mgi_mapping.tsv` (MGI IDs, synonyms, Entrez from JAX), `uniprot_mapping.tsv` (UniProt SwissProt via BioMart)
+- tRNA: 3-strategy GtRNAdb parser + hardcoded fallback (~430 genes), same mammalian counts as human
+- Expression: `expression_estimates.tsv` — hardcoded TPM estimates (RP 3000, Actb 5000, Gapdh 3000, median 15)
 
-### Human (`~/.codonscope/data/species/human/`)
+### Orthologs (in `~/.codonscope/data/orthologs/`)
+- `human_yeast.tsv` — 830 pairs via name matching + curated renames
+- `human_mouse.tsv` — Ensembl Compara one-to-one orthologs (~16K pairs)
+- `mouse_yeast.tsv` — Ensembl Compara one-to-one orthologs (~2-3K pairs)
 
-| File | Size | Contents |
-|------|------|----------|
-| `cds_sequences.fa.gz` | 8.9 MB | 19,229 validated CDS, keyed by ENSG ID (e.g. ENSG00000187634) |
-| `gene_id_map.tsv` | 1.3 MB | Columns: systematic_name, common_name, ensembl_transcript, refseq_transcript, entrez_id, cds_length, gc_content |
-| `trna_copy_numbers.tsv` | 519 B | Same format as yeast (hardcoded fallback data) |
-| `wobble_rules.tsv` | 1.9 KB | 61 rows, same columns as yeast |
-| `background_mono.npz` | 2.0 MB | Keys: mean(61,), std(61,), per_gene(19229,61), kmer_names(61,), gene_names(19229,) |
-| `background_di.npz` | 12 MB | Keys: mean(3721,), std(3721,), per_gene(19229,3721), kmer_names(3721,), gene_names(19229,) |
-| `background_tri.npz` | 2.1 MB | Keys: mean(226981,), std(226981,), kmer_names(226981,), gene_names(19229,) — **NO per_gene** |
-| `gene_metadata.npz` | 161 KB | Keys: gene_names(19229,), cds_lengths(19229,), gc_contents(19229,) |
+---
 
-### Background npz key reference
+## 3. Features Added Since Original Chunks 1-9
 
-Mono and di backgrounds contain `per_gene` (full N_genes x N_kmers float32 matrix, used for bootstrap resampling). Tri backgrounds do **not** — the matrix would be N_genes x 226,981 which is too large. Tricodon analysis falls back to analytic SE = `std / sqrt(n_genes)`.
+### Chunk 10: Mouse Species Support
+- Full mouse CDS download from Ensembl GRCm39
+- Longest valid CDS per ENSMUSG gene (later upgraded to BioMart canonical)
+- Mouse ID resolution: ENSMUSG, ENSMUST, MGI symbol (Title Case)
+- Hardcoded expression estimates
+- tRNA: reuses human/mammalian wobble rules
+- 99 RP genes (Rpl*/Rps*) found in gene_id_map
+- All single-species modes (1-5) work
+
+### Chunk 11: Enhanced ID Resolution + Mouse Data Sources
+- **GtRNAdb parser fixed:** 3-strategy parser handles old, modern, and compact header formats. T→U conversion. Skips iMet/SeC/Sup/Undet. Benefits all species.
+- **BioMart canonical transcripts:** Mouse CDS selection prefers Ensembl canonical transcript over longest CDS. Falls back to longest if BioMart fails.
+- **Multi-type ID resolution:** Auto-detects input ID type by regex pattern. 8-step priority resolution: Ensembl gene → Ensembl transcript → yeast systematic → species-specific (SGD, MGI, RefSeq NM_) → Entrez → UniProt → gene symbol → alias/synonym. Mixed ID types per gene list supported. Debug logging for detected types.
+- **New mapping files:** UniProt (all species), MGI mapping (mouse), SGD ID capture (yeast), Entrez IDs (mouse via BioMart)
+- **Ensembl Compara orthologs:** Mouse-human and mouse-yeast via bulk FTP download. Auto-discovers release number. One-to-one orthologs only.
+- **HGNC alias lookup:** Human genes can be found by HGNC aliases (alternative names)
+- **MGI synonym lookup:** Mouse genes can be found by MGI synonyms
+
+### Earlier Feature Additions (Chunks 7-9)
+- **CCLE cell line expression:** `download_ccle_expression()` downloads DepMap data. `--cell-line` CLI flag (e.g., HEK293T, HeLa, K562). Human only.
+- **Amino acid annotations:** `annotate_kmer()` adds AA labels to k-mers in results (e.g., "AAG (Lys)").
+- **Ramp codon analysis:** Mode 3 includes `ramp_composition` and `body_composition` DataFrames breaking down codon usage in ramp vs body regions.
+- **Per-dicodon FS enrichment:** Mode 4 `fs_dicodons` DataFrame shows which specific Fast→Slow dicodon transitions are most enriched.
+- **Gene name display:** Results include gene names (common names) alongside systematic IDs where applicable.
+- **Custom expression file:** `--expression-file` CLI flag for user-supplied expression data.
 
 ---
 
@@ -270,91 +356,41 @@ Mono and di backgrounds contain `per_gene` (full N_genes x N_kmers float32 matri
 
 ### Implemented differently than specified
 
-1. **`resolve_ids` return type.** Spec says `-> dict`. Implementation returns `IDMapping` (a dict-like class with extra attributes). Reason: the original dict-based return caused a confusing API where `len(result)` returned 4 instead of the mapped count.
-
-2. **`get_sequences` accepts multiple types.** Spec says `systematic_names: list[str]`. Implementation accepts `IDMapping`, `dict`, or `list[str]`. Reason: convenience — avoids `list(result.values())` boilerplate.
-
-3. **`all_possible_kmers` has `sense_only` parameter.** Spec doesn't mention this. Added because backgrounds use sense-only kmers (61) not all 64.
-
-4. **`run_composition` has `kmer`/`kmer_size` aliases for `k`.** Spec uses `--kmer` in CLI. Python function accepts `k`, `kmer`, or `kmer_size` interchangeably (resolves first non-None).
-
-5. **Human systematic_name is ENSG, not gene symbol.** Spec says "gene_symbol -> ensembl_gene_id -> ensembl_transcript_id -> entrez_id". Implementation uses ENSG as the primary key (`systematic_name`), HGNC symbol as `common_name`. Reason: ENSG is stable and unambiguous; HGNC symbols can change.
-
-6. **gene_id_map.tsv columns differ by species.** Yeast has `status` column (Verified/Uncharacterized/Dubious). Human has `ensembl_transcript`, `refseq_transcript`, `entrez_id`. The `get_gene_metadata()` method normalizes to the 4 common columns.
-
-7. **tRNA data uses hardcoded fallbacks exclusively.** Spec says download from GtRNAdb with fallback. In practice, GtRNAdb returns 0 parsed anticodons for both species (header format changed). The fallback tables are always used.
-
-8. **Mode 5 synonymous driver classification uses heuristics.** Spec says "correlation with tRNA gene copy number / GC3 content / wobble avoidance." Implementation uses per-codon rules rather than cross-family regression. This is simpler but less statistically rigorous.
-
-9. **Tricodon backgrounds are analytic, not bootstrap.** Spec says "bootstrap" everywhere. Tri backgrounds can't store the per-gene matrix (226K x 19K = too large), so tricodon Z-scores use `SE = std / sqrt(n)` instead of bootstrap resampling. Less accurate for small gene sets.
-
-### Not yet implemented (spec features still missing)
-
-| Feature | Spec section | Status |
-|---------|--------------|--------|
-| Mode 2: Translational Demand | 4.2 | Not started. Needs expression data (GTEx, yeast RNA-seq). |
-| Mode 3: Optimality Profile | 4.3 | Not started. Needs `core/optimality.py` (tAI, wtAI scoring). |
-| Mode 4: Collision Potential | 4.4 | Not started. Needs optimality classification (fast/slow codons). |
-| Mode 6: Cross-Species Comparison | 4.6 | Not started. Needs `core/orthologs.py` + Ensembl Compara data. |
-| Mouse species | 3.1 | Not started. Would follow same pattern as human (Ensembl canonical). |
-| Expression data (GTEx) | 3.5 | Not downloaded. Required for Mode 2. |
-| Ortholog mappings | 3.6 | Not downloaded. Required for Mode 6. |
-| HTML report generation | — | Not started. |
-| `core/optimality.py` | 2 | File does not exist. Needed for Modes 3 and 4. |
-| `core/orthologs.py` | 2 | File does not exist. Needed for Mode 6. |
-| `viz/plots.py`, `viz/report.py` | 2 | Directories/files do not exist. Plots are currently inline in mode files. |
+1. **`resolve_ids` returns `IDMapping`**, not `dict`. Custom dict-like class with `.n_mapped`, `.n_unmapped`, `.unmapped`. Backwards compat: `result["mapping"]` etc. still works.
+2. **`get_sequences` accepts multiple types** — IDMapping, dict, or list[str].
+3. **`all_possible_kmers` has `sense_only` parameter** — default True gives 61^k sense-only kmers.
+4. **`run_composition` has `kmer`/`kmer_size` aliases for `k`** — resolves first non-None.
+5. **Human systematic_name is ENSG, not HGNC symbol** — ENSG is stable; HGNC symbol is `common_name`.
+6. **gene_id_map.tsv columns differ by species** — `get_gene_metadata()` normalizes to 4 common columns.
+7. **tRNA data uses 3-strategy parser + hardcoded fallbacks** — parser now works but fallbacks remain as backup.
+8. **Mode 5 synonymous driver classification uses heuristics** — per-codon rules, not cross-family regression.
+9. **Tricodon backgrounds are analytic, not bootstrap** — no per-gene matrix (would be ~17GB for human).
 
 ---
 
-## 5. What to Build Next
+## 5. Known Bugs and Issues
 
-### Recommended order
+### Fixed
+1. **GtRNAdb parser** — Now supports 3 header formats. Previously returned 0 parsed anticodons for all species. Fixed in chunk 11.
 
-1. **`core/optimality.py`** — tAI and wobble-aware tAI (wtAI) scoring. Needed by both Mode 3 and Mode 4. Uses `wobble_rules.tsv` and `trna_copy_numbers.tsv`. Classify codons as fast/slow based on wtAI.
-
-2. **Mode 3: Optimality Profile** (`modes/mode3_profile.py`) — Per-codon optimality along transcripts. Metagene average. Ramp region analysis (first 50 codons). Depends on `optimality.py`.
-
-3. **Mode 4: Collision Potential** (`modes/mode4_collision.py`) — Fast-to-slow (FS) transition enrichment. 2x2 transition matrix. Depends on `optimality.py`.
-
-4. **Expression data download** — GTEx median TPM for human, yeast rich-media RNA-seq. Add to `download.py`.
-
-5. **Mode 2: Translational Demand** (`modes/mode2_demand.py`) — Expression-weighted codon demand. Depends on expression data.
-
-6. **Ortholog data download** — Ensembl Compara one-to-one orthologs. Add to `download.py`.
-
-7. **Mode 6: Cross-Species Comparison** (`modes/mode6_crossspecies.py`) — Per-gene RSCU correlation across species. Depends on ortholog mappings.
-
-8. **HTML report** — Summary report combining all mode outputs.
-
-### For each new mode, create
-
-- The mode file in `codonscope/modes/`
-- A CLI subcommand in `codonscope/cli.py`
-- A test file in `tests/`
-- Positive control integration tests (ribosomal proteins, Gcn4 targets, etc.)
+### Active Issues
+2. **MANE version hardcoded** — URL contains `v1.5`. Will 404 when NCBI releases v1.6+. Ensembl CDS URL uses `current_fasta` (auto-updates). GTEx URL updated to `adult-gtex/bulk-gex/v8/rna-seq/`.
+3. **Tricodon bootstrap not available** — 226K × N_genes matrix too large. Uses analytic SE instead. Less accurate for small gene sets.
+4. **Dicodon background files large** — Human: ~280MB uncompressed (19K genes × 3,721 dicodons × float32).
+5. **Mode 5 driver classification is heuristic** — Simple if/else rules, not statistical regression.
+6. **Yeast expression is approximate** — Hardcoded TPM estimates. RP genes at uniform 3000 TPM (real values vary). RP genes end up as ~72% of genome demand.
+7. **Mouse expression is estimated** — Hardcoded TPM approximations, not tissue-specific measured data.
+8. **Ortholog mapping is hybrid** — Human-yeast: name matching + 150 curated renames (830 pairs). Mouse pairs: Ensembl Compara bulk FTP.
+9. **Mouse BioMart canonical fallback** — Falls back to longest CDS if BioMart returns <5000 results or fails.
+10. **New mapping files need re-download** — UniProt, MGI, SGD ID, and Entrez mappings only created during fresh `download()`. Existing data directories need re-download to populate.
+11. **No save-intermediates option** — Mode results are returned in-memory; no built-in option to save intermediate computation files.
+12. **No ambiguous ID handling** — If a gene name maps to multiple systematic names, last match wins silently.
 
 ---
 
-## 6. Known Bugs and Issues
+## 6. Positive Controls (Verified)
 
-### Bugs
-
-1. **GtRNAdb parser returns 0 anticodons.** `_parse_gtrnadb_fasta()` regex doesn't match current GtRNAdb FASTA headers. Both yeast (`sacCer3-mature-tRNAs.fa`) and human (`hg38-mature-tRNAs.fa`) fail to parse. Hardcoded fallback tables are used instead. **Impact: none** (fallback data is fine). **Fix: low priority** — would need to inspect current GtRNAdb format and update regex.
-
-2. **MANE version pinned to v1.5.** The download URL is hardcoded to `MANE.GRCh38.v1.5.summary.txt.gz`. When NCBI releases v1.6+, this will 404. **Workaround:** update the version string in `MANE_SUMMARY_URL` in `download.py`. **Better fix:** parse the `current/` directory listing to find the latest summary filename.
-
-### Limitations
-
-3. **Tricodon bootstrap not available.** The per-gene tricodon matrix (226,981 x N_genes) would be ~17GB for human. Instead, tricodon backgrounds store only mean/std vectors, and Z-scores use analytic SE. This is less accurate for small gene sets (<50 genes). Mono and dicodon analyses use true bootstrap (per-gene matrix stored).
-
-4. **Dicodon background files are large but manageable.** Human: 12 MB compressed (19,229 genes x 3,721 dicodons x float32). Yeast: 3.6 MB. Not a problem on disk, but loaded fully into memory during analysis.
-
-5. **Mode 5 driver classification is heuristic.** The `_classify_single_driver()` function uses simple if/else rules rather than statistical tests across synonym families. A more rigorous approach would correlate per-family RSCU deviations with tRNA supply / GC3 / wobble status using regression. Current approach may misclassify when multiple drivers are correlated.
-
-6. **No ambiguous ID handling.** If a gene name maps to multiple systematic names (e.g., a common name shared by paralog families), the last match wins silently. The spec mentions `n_ambiguous` in the return summary but this is not tracked.
-
-7. **Human ENSG IDs stored without version numbers.** The gene_id_map and CDS FASTA use versionless ENSG IDs (e.g., `ENSG00000187634` not `ENSG00000187634.13`). Resolve_ids strips version numbers from input. This means you can't distinguish between ENSG versions, but in practice MANE Select has one version per gene so this is fine.
-
-8. **No `--force` flag for re-download.** Running `download("yeast")` when data already exists overwrites everything. No skip-if-exists logic. Not a bug per se, but the download takes a few minutes (human especially: ~1 min for Ensembl CDS, ~15 sec for backgrounds).
-
-9. **Wobble rules for Ser anticodon mismatch between yeast and human.** Yeast Ser uses `AGA` anticodon for TCT/TCC, human uses `AGC` anticodon for TCT/TCC/TCA. This reflects biological reality (different tRNA repertoires) but means the wobble rules tables are not interchangeable between species. Each species has its own curated table.
+- **Yeast Gcn4 targets (~59 mapped genes):** AGA-GAA dicodon Z=3.66 (all bg), Z=4.33 (matched bg, adj_p=9.6e-4). Top dicodon enrichment is GGT-containing (glycine). Mode 5 confirms Gly AA enrichment (AA-driven). Mode 4 shows FS transitions present.
+- **Yeast ribosomal proteins (~114 mapped genes):** Strong monocodon and dicodon bias. Mode 5: synonymous-driven RSCU deviations (translational selection). Mode 3: high optimality with visible ramp. Mode 4: high FF proportion, low FS enrichment (≤1.1). Mode 2: optimal codons (AAG, AGA, GCT) enriched in demand; rare codons (AGT, CTG, ATA) depleted. Z-scores moderate (~1.7) because RP genes dominate ~72% of genome demand.
+- **Human ribosomal proteins (14 genes):** Mode 1 monocodon shows significant codon bias.
+- **Cross-species RP orthologs:** Low RSCU correlation (mean r~0.13) between yeast and human RP genes, confirming different preferred codons (17/18 AAs). Both directions work.
