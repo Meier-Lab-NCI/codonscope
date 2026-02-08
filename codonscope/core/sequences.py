@@ -354,7 +354,31 @@ class SequenceDB:
                 mapping[gid_stripped] = resolved
             else:
                 unmapped.append(gid_stripped)
-                logger.warning("Could not resolve gene ID: %s", gid_stripped)
+                id_type = self._detect_id_type(gid_stripped)
+                if id_type == "ensg" and self.species == "human":
+                    logger.warning(
+                        "Could not resolve gene ID: %s — not in MANE Select "
+                        "(may be non-coding, mitochondrial, pseudogene, or retired Ensembl ID)",
+                        gid_stripped,
+                    )
+                elif id_type == "enst" and self.species == "human":
+                    logger.warning(
+                        "Could not resolve gene ID: %s — transcript not in MANE Select",
+                        gid_stripped,
+                    )
+                elif id_type == "ensmusg" and self.species == "mouse":
+                    logger.warning(
+                        "Could not resolve gene ID: %s — not in Ensembl canonical CDS set "
+                        "(may be non-coding, mitochondrial, or pseudogene)",
+                        gid_stripped,
+                    )
+                elif id_type == "ensmust" and self.species == "mouse":
+                    logger.warning(
+                        "Could not resolve gene ID: %s — transcript not in Ensembl canonical CDS set",
+                        gid_stripped,
+                    )
+                else:
+                    logger.warning("Could not resolve gene ID: %s", gid_stripped)
 
         result = IDMapping(mapping, unmapped)
         logger.info(
@@ -604,6 +628,19 @@ class SequenceDB:
         return self._gene_map[
             ["systematic_name", "common_name", "cds_length", "gc_content"]
         ].copy()
+
+    def get_common_names(self, systematic_names: list[str]) -> dict[str, str]:
+        """Return {systematic_name: common_name} for given genes.
+
+        Uses the gene_id_map.tsv data loaded at init time.
+        Returns empty string for genes without a common name.
+        """
+        result: dict[str, str] = {}
+        for name in systematic_names:
+            upper = name.upper()
+            common = self._sys_to_common.get(upper, "")
+            result[name] = common if common else name
+        return result
 
     @property
     def species_dir(self) -> Path:

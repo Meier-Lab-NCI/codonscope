@@ -1,7 +1,7 @@
 # CodonScope Implementation Status
 
 Last updated: 2026-02-07
-338 tests passing + 6 skipped. 22 commits on main. Version 0.1.0.
+338 tests passing + 6 skipped. 23 commits on main. Version 0.1.0.
 
 ---
 
@@ -39,6 +39,7 @@ class SequenceDB:
     def get_sequences(self, names) -> dict[str, str]          # accepts IDMapping, dict, or list[str]
     def get_sequences_for_ids(self, gene_ids: list[str]) -> dict[str, str]  # convenience combo
     def get_all_sequences(self) -> dict[str, str]
+    def get_common_names(self, systematic_names: list[str]) -> dict[str, str]
     def get_gene_metadata(self) -> pd.DataFrame
     @property species_dir -> Path
 ```
@@ -250,7 +251,7 @@ generate_report(
 ) -> Path
 ```
 
-Self-contained HTML with inline CSS and base64-embedded matplotlib plots. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6). Includes gene summary, volcano plots, attribution table, metagene profile, collision bars, demand analysis, cross-species correlation (if species2 provided).
+Self-contained HTML with inline CSS and base64-embedded matplotlib plots. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6). Includes gene summary with ID mapping table, volcano plots, attribution table, metagene profile, collision bars, demand analysis, cross-species correlation (if species2 provided). Exports `{stem}_results.zip` containing HTML report, data/*.tsv files, and README.txt documenting analysis parameters, input gene list, output file descriptions, and reference data sources.
 
 ### CLI
 
@@ -341,6 +342,18 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 - **Ensembl Compara orthologs:** Mouse-human and mouse-yeast via bulk FTP download. Auto-discovers release number. One-to-one orthologs only.
 - **HGNC alias lookup:** Human genes can be found by HGNC aliases (alternative names)
 - **MGI synonym lookup:** Mouse genes can be found by MGI synonyms
+
+### Chunk 12: Gene Name Display, Full Results Export, Colab Fixes
+- **`get_common_names()`** added to `SequenceDB` — maps systematic names to gene symbols
+- **Context-specific unmapped warnings** — ENSG IDs get "not in MANE Select (may be non-coding, mitochondrial, pseudogene, or retired)", ENST gets "transcript not in MANE Select", ENSMUSG gets "not in Ensembl canonical CDS set"
+- **Gene ID mapping table** in HTML report gene summary — shows Input ID → Gene Name → Ensembl/Systematic ID, collapsible `<details>` if >20 genes
+- **`gene_mapping.tsv`** exported to data directory with all ID mappings
+- **Results zip export** — `{stem}_results.zip` created alongside HTML, containing HTML report, data/*.tsv files, and README.txt
+- **README.txt in zip** — documents analysis parameters (species, expression source, bootstrap settings, seed), full input gene list, unmapped IDs, per-file descriptions, analysis mode explanations, and reference data sources
+- **Expanded HTML table limits** — Mode 1: 15→30 rows, Mode 2: demand codons 15→30 and top genes 10→20, Mode 4 FS dicodons: 20→30, Mode 5 attribution and drivers: show all significant, Mode 3 ramp slow codons: show all. "Full results in data/ directory" note added to all sections.
+- **Colab widget fix** — `enable_custom_widget_manager()` added to install cell for ipywidgets Textarea rendering
+- **Colab zip download** — report cell downloads zip instead of bare HTML
+- **Colab notebook UX** — tissue/cell line dropdowns (GTEx tissues + common cell lines), parameter descriptions for KMER_SIZE (mono/di/tricodon), BACKGROUND (all vs matched), METHOD (wtai vs tai), expanded interpretation guide with parameter table, expression file format example
 
 ### Earlier Feature Additions (Chunks 7-9)
 - **CCLE cell line expression:** `download_ccle_expression()` downloads DepMap data. `--cell-line` CLI flag (e.g., HEK293T, HeLa, K562). Human only.

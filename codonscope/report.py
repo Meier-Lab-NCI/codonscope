@@ -9,6 +9,7 @@ import base64
 import io
 import logging
 import time
+import zipfile
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -235,6 +236,23 @@ def generate_report(
             logger.warning("Mode 6 failed: %s", exc)
             sections.append(_section_error("Mode 6: Cross-Species Comparison", exc))
 
+    # ── Gene mapping TSV ────────────────────────────────────────────────
+    mapped_sys = list(id_mapping.values())
+    common_names = db.get_common_names(mapped_sys)
+    mapping_records = []
+    for input_id in sorted(id_mapping.keys()):
+        sys_name = id_mapping[input_id]
+        gene_name = common_names.get(sys_name, sys_name)
+        mapping_records.append({
+            "input_id": input_id,
+            "gene_name": gene_name,
+            "systematic_name": sys_name,
+        })
+    if mapping_records:
+        pd.DataFrame(mapping_records).to_csv(
+            data_dir_out / "gene_mapping.tsv", sep="\t", index=False,
+        )
+
     elapsed = time.time() - t0
     html = _build_html(species, gene_ids, sections, elapsed)
 
@@ -242,6 +260,22 @@ def generate_report(
     output.write_text(html, encoding="utf-8")
     logger.info("Report written to %s (%.1fs)", output, elapsed)
     logger.info("Data tables written to %s/", data_dir_out)
+
+    # ── Create zip with HTML + data TSVs + README ──────────────────────
+    zip_path = output.parent / f"{output.stem}_results.zip"
+    readme_text = _generate_readme(
+        species=species, gene_ids=gene_ids, id_mapping=id_mapping,
+        n_bootstrap=n_bootstrap, seed=seed, elapsed=elapsed,
+        tissue=tissue, cell_line=cell_line, species2=species2,
+        data_dir_out=data_dir_out,
+    )
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(output, output.name)
+        zf.writestr("README.txt", readme_text)
+        for tsv_file in sorted(data_dir_out.glob("*.tsv")):
+            zf.write(tsv_file, f"data/{tsv_file.name}")
+    logger.info("Results zip written to %s", zip_path)
+
     return output
 
 
@@ -462,6 +496,51 @@ def _section_gene_summary(
         <p class="warn">Unmapped IDs ({n_unmapped}): {unmapped_str}</p>
         """
 
+    # Gene mapping table: Input ID → Gene Name → Systematic/Ensembl ID
+    common_names = db.get_common_names(mapped_sys)
+    sp = species.lower()
+    is_yeast = sp == "yeast"
+
+    mapping_rows = ""
+    for input_id in sorted(id_mapping.keys()):
+        sys_name = id_mapping[input_id]
+        gene_name = common_names.get(sys_name, sys_name)
+        if is_yeast:
+            mapping_rows += (
+                f"<tr><td>{escape(input_id)}</td>"
+                f"<td><strong>{escape(gene_name)}</strong></td>"
+                f"<td>{escape(sys_name)}</td></tr>\n"
+            )
+        else:
+            mapping_rows += (
+                f"<tr><td>{escape(input_id)}</td>"
+                f"<td><strong>{escape(gene_name)}</strong></td>"
+                f"<td>{escape(sys_name)}</td></tr>\n"
+            )
+
+    if is_yeast:
+        col_headers = "<th>Input ID</th><th>Gene Name</th><th>Systematic Name</th>"
+    else:
+        col_headers = "<th>Input ID</th><th>Gene Name</th><th>Ensembl ID</th>"
+
+    if n_mapped > 20:
+        mapping_html = f"""
+<details><summary>Gene ID mapping ({n_mapped} genes — click to expand)</summary>
+<table>
+<tr>{col_headers}</tr>
+{mapping_rows}
+</table>
+</details>"""
+    elif n_mapped > 0:
+        mapping_html = f"""
+<h3>Gene ID Mapping</h3>
+<table>
+<tr>{col_headers}</tr>
+{mapping_rows}
+</table>"""
+    else:
+        mapping_html = ""
+
     return f"""
 <div class="section">
 <h2>Gene List Summary</h2>
@@ -492,6 +571,7 @@ def _section_gene_summary(
   </div>
 </div>
 {unmapped_html}
+{mapping_html}
 </div>
 """
 
@@ -525,8 +605,8 @@ def _section_mode1(result: dict, k: int, species: str = "", n_bootstrap: int = 1
     plot_b64 = _plot_volcano(df, f"Mode 1: {kname} Composition (n={n_genes} genes)")
 
     # Top tables
-    top_enriched = _results_table(enriched.head(15), k)
-    top_depleted = _results_table(depleted.head(15), k)
+    top_enriched = _results_table(enriched.head(30), k)
+    top_depleted = _results_table(depleted.head(30), k)
 
     # Species-specific description
     sp = species.lower()
@@ -625,6 +705,7 @@ GC-matched genes if you want to be thorough about it.</p>
 {top_enriched}
 <h3>Top Depleted ({len(depleted)} total)</h3>
 {top_depleted}
+<p><em>Full results available in the data/ directory.</em></p>
 {method_note}
 </div>
 """
@@ -645,10 +726,10 @@ def _section_mode5(result: dict, species: str = "") -> str:
     # Attribution pie chart
     pie_b64 = _plot_attribution_pie(s)
 
-    # Attribution table (significant codons only)
+    # Attribution table (all significant codons)
     sig_attr = attr_df[attr_df["attribution"] != "None"].sort_values(
         "rscu_z_score", key=abs, ascending=False
-    ).head(20)
+    )
 
     rows = ""
     for _, row in sig_attr.iterrows():
@@ -672,7 +753,7 @@ def _section_mode5(result: dict, species: str = "") -> str:
     syn_df = result.get("synonymous_drivers", pd.DataFrame())
     driver_html = ""
     if len(syn_df) > 0:
-        sig_syn = syn_df[syn_df["driver"] != "not_applicable"].head(15)
+        sig_syn = syn_df[syn_df["driver"] != "not_applicable"]
         if len(sig_syn) > 0:
             driver_rows = ""
             for _, row in sig_syn.iterrows():
@@ -730,6 +811,7 @@ three neat categories.</p>
 {rows}
 </table>
 {driver_html}
+<p><em>Full results available in the data/ directory.</em></p>
 {method_note}
 </div>
 """
@@ -822,6 +904,7 @@ fun like that.</p>
 </div>
 <div class="plot-container">{_img_tag(plot_b64)}</div>
 {ramp_body_html}
+<p><em>Full results available in the data/ directory.</em></p>
 {method_note}
 </div>
 """
@@ -910,6 +993,7 @@ the transition pattern is genuinely unusual, not just noisy.</p>
 {"".join(f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>{gs[t]/bg[t]:.3f}</td></tr>' if bg[t] > 0 else f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>-</td></tr>' for t in ('FF','FS','SF','SS'))}
 </table>
 {fs_dicodon_html}
+<p><em>Full results available in the data/ directory.</em></p>
 {method_note}
 </div>
 """
@@ -928,12 +1012,12 @@ def _section_mode2(result: dict, species: str = "") -> str:
     depleted = sig[sig["z_score"] < 0].sort_values("z_score", ascending=True)
 
     # Demand bar plot
-    plot_b64 = _plot_demand_bars(enriched.head(15), depleted.head(15), n_genes, tissue)
+    plot_b64 = _plot_demand_bars(enriched.head(30), depleted.head(30), n_genes, tissue)
 
     # Top genes table — use gene_name if available, fall back to gene (ENSG)
     name_col = "gene_name" if "gene_name" in top.columns else "gene"
     top_rows = ""
-    for _, row in top.head(10).iterrows():
+    for _, row in top.head(20).iterrows():
         display_name = str(row[name_col])
         top_rows += f"""<tr>
           <td><strong>{escape(display_name)}</strong></td>
@@ -1044,9 +1128,10 @@ one outlier or are a genuine group effect.</p>
 </table>
 <div class="plot-container">{_img_tag(plot_b64)}</div>
 <h3>Top Demand-Enriched Codons</h3>
-{_demand_table(enriched.head(15))}
+{_demand_table(enriched.head(30))}
 <h3>Top Demand-Depleted Codons</h3>
-{_demand_table(depleted.head(15))}
+{_demand_table(depleted.head(30))}
+<p><em>Full results available in the data/ directory.</em></p>
 {method_note}
 </div>
 """
@@ -1167,6 +1252,156 @@ def _section_error(title: str, exc: Exception) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# README generator for zip export
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _generate_readme(
+    species: str,
+    gene_ids: list[str],
+    id_mapping,
+    n_bootstrap: int,
+    seed: int | None,
+    elapsed: float,
+    tissue: str | None,
+    cell_line: str | None,
+    species2: str | None,
+    data_dir_out: Path,
+) -> str:
+    """Generate a README.txt documenting the analysis for the zip export."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Species descriptions
+    sp_desc = {
+        "yeast": "Saccharomyces cerevisiae (6,685 ORFs from SGD, mitochondrial excluded)",
+        "human": "Homo sapiens (19,229 CDS from MANE Select v1.5)",
+        "mouse": "Mus musculus (~21,500 CDS from Ensembl GRCm39)",
+    }
+    species_full = sp_desc.get(species.lower(), species)
+
+    # Expression source
+    if species.lower() == "yeast":
+        expr_source = "Hardcoded rich-media estimates (RP genes ~3000 TPM, median ~15 TPM)"
+    elif species.lower() == "human":
+        if cell_line:
+            expr_source = f"CCLE cell line proxy: {cell_line} (mapped to nearest GTEx tissue)"
+        elif tissue:
+            expr_source = f"GTEx v8 median TPM: {tissue}"
+        else:
+            expr_source = "GTEx v8 cross-tissue median TPM"
+    elif species.lower() == "mouse":
+        expr_source = "Hardcoded estimates (RP genes ~3000 TPM, Actb ~5000 TPM, median ~15 TPM)"
+    else:
+        expr_source = "Default"
+
+    # Gene list
+    n_input = len(gene_ids)
+    if n_input <= 30:
+        gene_list_str = "\n".join(f"  {g}" for g in gene_ids)
+    else:
+        gene_list_str = "\n".join(f"  {g}" for g in gene_ids[:25])
+        gene_list_str += f"\n  ... and {n_input - 25} more"
+
+    # Data files present
+    tsv_files = sorted(data_dir_out.glob("*.tsv"))
+    file_descriptions = {
+        "gene_mapping.tsv": "Input ID -> Gene name -> Systematic/Ensembl ID mapping",
+        "mode1_monocodon.tsv": "Mode 1: Single codon (monocodon) composition vs genome, Z-scores and adjusted p-values",
+        "mode1_monocodon_matched.tsv": "Mode 1: Monocodon composition vs length+GC matched background",
+        "mode1_dicodon.tsv": "Mode 1: Adjacent codon pair (dicodon) composition vs genome",
+        "mode1_dicodon_matched.tsv": "Mode 1: Dicodon composition vs length+GC matched background",
+        "mode2_demand.tsv": "Mode 2: Expression-weighted translational demand per codon",
+        "mode3_profile.tsv": "Mode 3: Per-gene optimality scores (tAI/wtAI)",
+        "mode3_ramp_composition.tsv": "Mode 3: Codon composition in the 5' ramp region",
+        "mode3_body_composition.tsv": "Mode 3: Codon composition in the gene body (post-ramp)",
+        "mode4_collision.tsv": "Mode 4: Per-gene fast-to-slow (FS) transition fractions",
+        "mode4_fs_dicodons.tsv": "Mode 4: Per-dicodon FS enrichment breakdown",
+        "mode5_attribution.tsv": "Mode 5: Per-codon attribution (AA-driven vs synonymous codon choice)",
+        "mode6_compare.tsv": "Mode 6: Per-gene cross-species RSCU correlation",
+    }
+
+    file_list = ""
+    for f in tsv_files:
+        desc = file_descriptions.get(f.name, "Analysis results")
+        file_list += f"  data/{f.name}\n    {desc}\n\n"
+
+    cross_sp = ""
+    if species2:
+        cross_sp = f"Cross-species comparison: {species} vs {species2}\n"
+
+    return f"""CodonScope Analysis Results
+{'=' * 60}
+
+Generated: {now}
+CodonScope version: {__version__}
+Analysis time: {elapsed:.1f} seconds
+
+ANALYSIS PARAMETERS
+{'-' * 40}
+Species: {species_full}
+{cross_sp}Expression source: {expr_source}
+Bootstrap iterations: {n_bootstrap:,}
+Random seed: {seed if seed is not None else 'None (random)'}
+
+INPUT GENE LIST ({n_input} genes, {id_mapping.n_mapped} mapped, {id_mapping.n_unmapped} unmapped)
+{'-' * 40}
+{gene_list_str}
+
+{f"Unmapped IDs ({id_mapping.n_unmapped}): {', '.join(id_mapping.unmapped[:20])}" if id_mapping.n_unmapped > 0 else "All input IDs were successfully mapped."}
+
+FILES IN THIS ARCHIVE
+{'-' * 40}
+  {Path(data_dir_out).parent.name.replace('_data', '')}.html
+    Self-contained HTML report with embedded plots
+
+  README.txt
+    This file — documents the analysis parameters, gene list, and output files
+
+{file_list}
+ANALYSIS MODES
+{'-' * 40}
+Mode 1 (Composition): Compares mono- and dicodon frequencies in your gene set
+  vs the genome background. Uses bootstrap resampling ({n_bootstrap:,} iterations)
+  to compute Z-scores. Benjamini-Hochberg FDR correction applied.
+  Columns: kmer, amino_acid, observed_freq, expected_freq, z_score, p_value,
+  adjusted_p, cohens_d
+
+Mode 2 (Translational Demand): Weights each gene's codon usage by its
+  expression level (TPM x number of codons). Shows which codons the ribosome
+  pool is disproportionately decoding in your gene set vs the genome.
+
+Mode 3 (Optimality Profile): Scores each codon position using the wobble-
+  penalized tRNA Adaptation Index (wtAI). Higher = more efficiently decoded.
+  Metagene profile normalised to 100 positional bins. Ramp analysis compares
+  the first {50} codons to the gene body.
+
+Mode 4 (Collision Potential): Classifies codons as fast/slow based on wtAI,
+  then counts Fast-to-Fast (FF), Fast-to-Slow (FS), Slow-to-Fast (SF), and
+  Slow-to-Slow (SS) transitions. FS transitions are collision-prone.
+
+Mode 5 (Disentanglement): Separates amino acid composition effects from
+  synonymous codon choice (RSCU). Classifies each significant codon as
+  AA-driven, Synonymous-driven, or Both.
+
+Mode 6 (Cross-Species): Computes per-gene RSCU correlation between ortholog
+  pairs across species. High r = conserved codon preferences, low r = divergent.
+
+REFERENCE DATA SOURCES
+{'-' * 40}
+Yeast CDS: Saccharomyces Genome Database (SGD) verified ORFs
+Human CDS: NCBI MANE Select v1.5 + Ensembl GRCh38
+Mouse CDS: Ensembl GRCm39 canonical transcripts
+tRNA gene copies: GtRNAdb (genomic tRNA database)
+Human expression: GTEx v8 (Genotype-Tissue Expression project)
+Orthologs: Ensembl Compara (mouse) / curated name matching (yeast)
+
+CITATION
+{'-' * 40}
+CodonScope v{__version__}
+https://github.com/Meier-Lab-NCI/codonscope
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Helper tables
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1201,8 +1436,8 @@ def _results_table(df: pd.DataFrame, k: int) -> str:
 
 def _fs_dicodon_table(fs_dicodons: pd.DataFrame) -> str:
     """Build HTML table for per-dicodon FS enrichment breakdown."""
-    # Show top 20 most enriched FS dicodons
-    top = fs_dicodons.head(20)
+    # Show top 30 most enriched FS dicodons
+    top = fs_dicodons.head(30)
     rows = ""
     for _, row in top.iterrows():
         z = row["z_score"]
@@ -1253,7 +1488,7 @@ def _ramp_body_tables(
     ].sort_values("z_score", ascending=False)
 
     slow_rows = ""
-    for _, row in ramp_slow.head(15).iterrows():
+    for _, row in ramp_slow.iterrows():
         z_cls = "sig-pos" if row["adjusted_p"] < 0.05 else ""
         slow_rows += f"""<tr>
           <td><strong>{escape(str(row['codon']))}</strong></td>

@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**338 tests passing (+ 6 skipped pending re-download). 22 commits on main.**
+**338 tests passing (+ 6 skipped pending re-download). 23 commits on main.**
 
 ### Build progress
 
@@ -25,13 +25,14 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 9 | HTML report generation | ✅ Done |
 | 10 | Mouse species support | ✅ Done |
 | 11 | Enhanced ID resolution + mouse data sources | ✅ Done |
+| 12 | Gene name display, full results export, Colab fixes | ✅ Done |
 
 ### What exists (files and what they do)
 
 **Core engine:**
 - `codonscope/__init__.py` — version 0.1.0
 - `codonscope/core/codons.py` — k-mer counting engine (mono/di/tri), `sequence_to_codons()`, `count_kmers()`, `kmer_frequencies()`, `all_possible_kmers()`, `SENSE_CODONS` (61 sense codons)
-- `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Enhanced multi-type ID resolution with auto-detection: yeast (systematic name, common name, SGD ID, UniProt), human (HGNC symbol, ENSG, ENST, Entrez ID, RefSeq NM_, UniProt, HGNC aliases), mouse (MGI symbol, ENSMUSG, ENSMUST, MGI ID, Entrez ID, UniProt, MGI synonyms). Supports mixed ID types per gene list. `get_sequences()` accepts IDMapping, dict, or list[str].
+- `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Enhanced multi-type ID resolution with auto-detection: yeast (systematic name, common name, SGD ID, UniProt), human (HGNC symbol, ENSG, ENST, Entrez ID, RefSeq NM_, UniProt, HGNC aliases), mouse (MGI symbol, ENSMUSG, ENSMUST, MGI ID, Entrez ID, UniProt, MGI synonyms). Supports mixed ID types per gene list. `get_sequences()` accepts IDMapping, dict, or list[str]. `get_common_names()` maps systematic names to gene symbols. Context-specific unmapped gene warnings (e.g. "not in MANE Select").
 - `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline
 - `codonscope/core/optimality.py` — `OptimalityScorer` class: loads wobble_rules.tsv, computes per-codon tAI and wtAI weights (normalised 0–1, pseudocount for zero-copy anticodons). Provides `gene_tai()`, `gene_wtai()`, `per_position_scores()`, `smooth_profile()`, `classify_codons()` (fast/slow by median threshold).
 - `codonscope/core/orthologs.py` — `OrthologDB` class: bidirectional gene mapping between species. Loads TSV from `~/.codonscope/data/orthologs/`. `map_genes()`, `get_all_pairs()`, `n_pairs`.
@@ -48,7 +49,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/modes/mode6_compare.py` — `run_compare()` cross-species comparison. Per-gene RSCU correlation between ortholog pairs. Gene-set vs genome-wide correlation distribution. Bootstrap Z-test + Mann-Whitney U. Divergent gene analysis (different preferred codons tracking tRNA pool differences). Scatter data per amino acid. Two-panel plot (correlation histogram + ranked bar chart).
 
 **Report:**
-- `codonscope/report.py` — `generate_report()` HTML report generator. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6) and produces a single self-contained HTML file with inline CSS and base64-embedded matplotlib plots. Includes gene summary, volcano plots, attribution table, metagene profile, collision bars, demand analysis, cross-species correlation.
+- `codonscope/report.py` — `generate_report()` HTML report generator. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6) and produces a self-contained HTML file with inline CSS/plots. Gene summary with ID mapping table (Input ID → Gene Name → Ensembl/Systematic ID). Exports `{stem}_results.zip` containing HTML, data/*.tsv files, and README.txt documenting analysis parameters, gene list, file descriptions, and data sources. Expanded table limits (30 rows for composition/demand, all significant for Mode 5).
 
 **CLI:**
 - `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `composition`, `demand`, `profile`, `collision`, `disentangle`, `compare`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
