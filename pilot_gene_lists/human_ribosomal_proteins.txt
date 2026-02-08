@@ -1,0 +1,103 @@
+# Human cytoplasmic ribosomal proteins — core structural components (80 genes)
+# Source: HGNC Ribosomal Protein gene group, filtered to core structural
+#   components of the 40S and 60S subunits. Excludes tissue-specific paralogs
+#   (RPL3L, RPL7L1, RPL10L, RPL22L1, RPL26L1, RPL36AL, RPS27L, RPSA2),
+#   the Y-linked copies (RPS4Y1, RPS4Y2), and the RPS19 binding protein (RPS19BP1).
+# References:
+#   dos Reis M, Savva R & Wernisch L, 'Solving the riddle of codon usage
+#     preferences: a test for translational selection', Nucleic Acids Res
+#     32:5036-5044 (2004).
+#   Yoshihama M et al., 'The human ribosomal protein genes: sequencing and
+#     comparative analysis of 73 genes', Genome Res 12:379-390 (2002).
+# Expected CodonScope results:
+#   Mode 1: Strong codon bias; enrichment for C-ending codons (GC3 bias)
+#   Mode 2: Dominant demand contribution — RP genes are among the most highly
+#     expressed in all human tissues
+#   Mode 3: High optimality throughout with detectable 5' ramp
+#   Mode 5: Mixed signal — both AA-driven and synonymous-driven components.
+#     Unlike yeast where synonymous selection dominates, human RP codon bias
+#     is partly confounded by GC3 from recombination (Pouyet et al., eLife 2017)
+#   Mode 6: Low RSCU correlation with yeast orthologs (~0.1-0.15) despite both
+#     being codon-optimized — different preferred codons track different tRNA pools
+# Large subunit (60S) — 47 proteins
+RPL3
+RPL4
+RPL5
+RPL6
+RPL7
+RPL7A
+RPL8
+RPL9
+RPL10
+RPL10A
+RPL11
+RPL12
+RPL13
+RPL13A
+RPL14
+RPL15
+RPL17
+RPL18
+RPL18A
+RPL19
+RPL21
+RPL22
+RPL23
+RPL23A
+RPL24
+RPL26
+RPL27
+RPL27A
+RPL28
+RPL29
+RPL30
+RPL31
+RPL32
+RPL34
+RPL35
+RPL35A
+RPL36
+RPL36A
+RPL37
+RPL37A
+RPL38
+RPL39
+RPL41
+RPLP0
+RPLP1
+RPLP2
+UBA52
+# Small subunit (40S) — 33 proteins
+RPSA
+RPS2
+RPS3
+RPS3A
+RPS4X
+RPS5
+RPS6
+RPS7
+RPS8
+RPS9
+RPS10
+RPS11
+RPS12
+RPS13
+RPS14
+RPS15
+RPS15A
+RPS16
+RPS17
+RPS18
+RPS19
+RPS20
+RPS21
+RPS23
+RPS24
+RPS25
+RPS26
+RPS27
+RPS27A
+RPS28
+RPS29
+FAU
+RACK1

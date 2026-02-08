@@ -113,16 +113,26 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - **Yeast glycolytic enzymes (17 genes):** Highly expressed, codon-optimized. Similar direction to RP genes but fewer reach significance due to small N.
 - **Cross-species RP orthologs:** Low RSCU correlation (mean r~0.13) between yeast and human RP genes, confirming different preferred codons (17/18 AAs have different preferred codons). Both directions work (yeast→human and human→yeast).
 
-### Pilot gene lists (in `examples/`)
+### Pilot gene lists (in `pilot_gene_lists/`)
+
+12 curated gene lists with literature citations and expected results. See `pilot_gene_lists/README.md`.
 
 | File | Species | Genes | Expected signal |
 |------|---------|-------|-----------------|
-| `yeast_rp_genes.txt` | yeast | 132 | Synonymous-driven (Mode 5), high optimality + ramp (Mode 3), low collision (Mode 4) |
-| `yeast_gcn4_targets.txt` | yeast | 55 | AA-driven (Mode 5): glycine/arginine enriched. Contrast with RP genes. |
-| `yeast_glycolytic.txt` | yeast | 17 | Codon-optimized like RP genes, small N limits significance |
-| `human_rp_genes.txt` | human | 94 | Codon bias with different preferred codons than yeast |
-| `human_collagen_genes.txt` | human | 21 | Strongest AA-driven signal (Gly-X-Y repeats) |
-| `mouse_rp_genes.txt` | mouse | 99 | Parallels human RP results (same mammalian tRNA pools) |
+| `yeast_gcn4_targets.txt` | yeast | 54 | AA-driven (Gly enrichment, Natarajan 2001) |
+| `yeast_ribosomal_proteins.txt` | yeast | 132 | Synonymous-driven (Ikemura 1985, Sharp & Li 1987) |
+| `yeast_trm4_targets.txt` | yeast | 39 | TTG enrichment (Chan 2012, Trm4/m5C) |
+| `yeast_trm9_targets.txt` | yeast | 50 | AGA/GAA enrichment (Begley 2007, Trm9/mcm5s2U) |
+| `human_ribosomal_proteins.txt` | human | 80 | Mixed GC3+selection (dos Reis 2004) |
+| `human_5top_mrnas.txt` | human | 115 | mTOR-regulated (Thoreen 2012, Philippe 2020) |
+| `human_proliferation_myc.txt` | human | 200 | GC3 bias NOT selection (MSigDB; Pouyet 2017 caveat) |
+| `human_differentiation_emt.txt` | human | 200 | GC3 bias opposite direction (MSigDB; Pouyet 2017) |
+| `human_secreted_proteins.txt` | human | 53 | AA-driven signal peptide+collagens (Zhou 2024) |
+| `human_isr_upregulated.txt` | human | 18 | **Negative control** — uORF mechanism (Harding 2000) |
+| `human_membrane_proteins.txt` | human | 50 | AA-driven hydrophobic TM domains |
+| `cross_species_rp_yeast.txt` | yeast | 75 | Mode 6: low RSCU correlation (~0.13) |
+
+Quick-start gene lists in `examples/`: `yeast_rp_genes.txt` (132), `human_rp_genes.txt` (94), `mouse_rp_genes.txt` (99), `yeast_trm_genes.txt` (16).
 
 ### Known issues
 

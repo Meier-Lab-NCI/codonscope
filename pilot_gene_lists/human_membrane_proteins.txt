@@ -1,0 +1,71 @@
+# Human transmembrane proteins — Mode 5 AA-driven test case (55 genes)
+# Source: Curated from receptor tyrosine kinases, ion channels, transporters,
+#   GPCRs, and tetraspanins.
+# Reference: General protein structure literature on transmembrane domain
+#   amino acid composition.
+# Transmembrane proteins are enriched for hydrophobic amino acids (Leu, Ile,
+# Val, Phe, Trp, Ala) in their membrane-spanning domains. This amino acid
+# composition difference should drive most of the codon usage signal.
+# Expected CodonScope results:
+#   Mode 5: Codon bias is predominantly AA-driven (hydrophobic amino acid
+#     enrichment: Leu, Ile, Val, Phe, Trp for transmembrane domains), NOT
+#     synonymous-driven. This tests Mode 5's ability to correctly attribute
+#     codon bias to amino acid composition rather than synonymous choice.
+#   Mode 1: Enrichment for codons encoding hydrophobic amino acids
+#   Mode 3: May show distinctive optimality profile due to membrane insertion
+#     pause sites
+# Receptor tyrosine kinases
+EGFR
+ERBB2
+ERBB3
+FGFR1
+FGFR2
+IGF1R
+INSR
+PDGFRA
+MET
+KIT
+RET
+NTRK1
+# Ion channels
+SCN1A
+SCN2A
+SCN5A
+KCNA1
+KCNA2
+KCNJ2
+KCNQ1
+CACNA1A
+CACNA1C
+CLCN1
+CFTR
+# Transporters
+SLC2A1
+SLC2A4
+SLC6A3
+SLC6A4
+ABCB1
+ABCC1
+SLC12A1
+ATP1A1
+ATP2A2
+# GPCRs
+ADRB2
+DRD2
+HTR2A
+OPRM1
+CHRM1
+GRM1
+GRIA1
+GABRA1
+GABBR1
+ADORA2A
+# Tetraspanins and other TM proteins
+CD9
+CD81
+CD44
+ITGA2
+ITGB1
+AQP1
+AQP4
+TMEM16A

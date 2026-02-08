@@ -1,0 +1,36 @@
+# Human integrated stress response (ISR) translationally upregulated genes (18 genes)
+# Sources:
+#   Harding HP et al., 'Regulated translation initiation controls stress-induced
+#     gene expression in mammalian cells', Mol Cell 6:1099-1108 (2000).
+#   Pakos-Zebrucka K et al., 'The integrated stress response', EMBO Rep
+#     17:1374-1395 (2016).
+# These genes are translationally upregulated during ISR via uORF-mediated
+# mechanisms (phospho-eIF2alpha -> selective translation of mRNAs with upstream
+# open reading frames).
+# Expected CodonScope results:
+#   Mode 1: Distinct codon composition from 5'TOP genes
+#   Mode 5: Different AA composition from highly expressed genes
+#   NOTE: The translational upregulation of these genes is primarily driven by
+#   uORF mechanisms in the 5'UTR, NOT by codon-specific effects. CodonScope
+#   should show that their CDS codon usage is NOT what distinguishes them —
+#   this is a useful NEGATIVE CONTROL for codon-level analysis. Any codon
+#   enrichment seen likely reflects amino acid function, not translational
+#   selection.
+ATF4
+ATF5
+DDIT3
+PPP1R15A
+ASNS
+TRIB3
+ATF3
+CHAC1
+SLC7A11
+CTH
+CBS
+PSAT1
+PHGDH
+MTHFD2
+SLC7A5
+HERPUD1
+SLC1A5
+WARS1

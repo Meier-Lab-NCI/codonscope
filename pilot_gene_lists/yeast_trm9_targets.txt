@@ -1,0 +1,79 @@
+# Yeast genes with extreme AGA/GAA codon usage — Trm9 modification targets (50 genes)
+# Source: Top 50 genes by combined AGA (Arg) + GAA (Glu) codon fraction,
+#   computed from SGD CDS sequences (>=100 codons, >=3 Arg, >=3 Glu).
+#   Based on the codon bias criterion from:
+#   Begley U et al., 'Trm9-catalyzed tRNA modifications link translation to
+#     the DNA damage response', Mol Cell 28:860-870 (2007).
+# The Begley paper identified 425 "Group 1" genes with high AGA+GAA usage.
+# This list selects the 50 most extreme (excluding small PAU seripauperin genes).
+# Biological context:
+#   Trm9 methyltransferase catalyses mcm5s2U modification at wobble position of
+#   tRNA-Arg(UCU) and tRNA-Glu(UUC), enhancing decoding of AGA and GAA codons.
+#   Under DNA damage (MMS), Trm9-dependent tRNA modification selectively
+#   promotes translation of AGA/GAA-enriched genes — particularly RNR1/3
+#   (ribonucleotide reductase) required for DNA repair.
+# Overlap with other pilot lists:
+#   ~20 of these are also in yeast_ribosomal_proteins.txt (RP genes are among
+#   the most codon-optimized). Use the non-RP subset (glycolytic, translation
+#   factors) for a complementary analysis.
+# Expected CodonScope results:
+#   Mode 1: Strong AGA and GAA enrichment; depletion of AGG, GAG, and rare
+#     Arg codons (CGN family)
+#   Mode 2: Very high demand — these are the highest-expressed yeast genes
+#   Mode 5: Synonymous-driven signal (AGA preference within Arg, GAA within Glu)
+#   Mode 3: High optimality throughout (highly expressed genes)
+# Ribosomal proteins (18)
+RPL3
+RPL8A
+RPL8B
+RPL10
+RPL18A
+RPL22A
+RPL28
+RPL30
+RPL33B
+RPP0
+RPS1A
+RPS1B
+RPS10A
+RPS10B
+RPS20
+RPS26A
+RPS26B
+RPS31
+# snoRNP / ribosome biogenesis (1)
+NHP2
+# Glycolytic/fermentation enzymes (10)
+TDH3
+TDH2
+TDH1
+ENO1
+ENO2
+CDC19
+GPM1
+TPI1
+PDC1
+PDC5
+# Translation factors (4)
+TEF1
+TEF2
+HYP2
+ANB1
+# Other highly expressed (17)
+ADH1
+HTA2
+HTB1
+HHT1
+HHT2
+TSA1
+FPR2
+CIS3
+TOM22
+TAL1
+SEC53
+YRB1
+BUD28
+MF(ALPHA)1
+YDL228C
+YPL142C
+YPL197C

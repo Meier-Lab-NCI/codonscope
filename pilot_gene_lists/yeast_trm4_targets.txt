@@ -1,0 +1,63 @@
+# Yeast genes with >=90% TTG leucine codon usage — Trm4/m5C modification targets (39 genes)
+# Source: Computed from SGD CDS sequences following the criterion in:
+#   Chan CTY et al., 'A quantitative systems approach reveals dynamic control
+#     of tRNA modifications during cellular stress', PLoS Genet 6:e1001247 (2010).
+#   Chan CTY et al., 'Reprogramming of tRNA modifications controls the oxidative
+#     stress response by codon-biased translation of proteins', Nat Commun
+#     3:937 (2012).
+# The paper reported 38 genes at >90% TTG threshold among 5,782 genes; our
+# computation from 6,685 current SGD ORFs yields 39 (one borderline gene at
+# exactly 90.0%, consistent with CDS annotation version differences).
+# Biological context:
+#   Under oxidative stress (H2O2), Trm4 methyltransferase increases m5C
+#   modification at the wobble position of tRNA(Leu-CAA), enhancing decoding
+#   of TTG codons. Genes with high TTG usage are selectively upregulated at
+#   the translational level. RPL22A (100% TTG, 7/7 leucines) vs RPL22B (34%
+#   TTG) is the key differential example from the paper.
+# Expected CodonScope results:
+#   Mode 1: Extreme TTG enrichment, depletion of other Leu codons (TTA, CTN)
+#   Mode 2: Very high demand contribution — these are among the most highly
+#     expressed yeast genes
+#   Mode 3: High optimality throughout (most are RP/glycolytic genes)
+#   Mode 5: Synonymous-driven signal (TTG preference within Leu family)
+# Ribosomal protein genes (27)
+RPL4A
+RPL4B
+RPL8A
+RPL8B
+RPL9A
+RPL10
+RPL12B
+RPL15A
+RPL17A
+RPL17B
+RPL22A
+RPL28
+RPL36B
+RPL37A
+RPL37B
+RPL39
+RPL42A
+RPL43A
+RPS2
+RPS5
+RPS6A
+RPS6B
+RPS9B
+RPS10B
+RPS13
+RPS15
+RPS26B
+# Non-ribosomal genes (12) — glycolytic/metabolic and translation-related
+TDH3
+TDH2
+TDH1
+ENO2
+ENO1
+CDC19
+PDC1
+HYP2
+ANB1
+HSP12
+CCW12
+NOP10

@@ -448,130 +448,55 @@ python3 -m codonscope.cli demand \
     --expression my_expression.tsv
 ```
 
-## Pilot Gene Lists for Testing
+## Pilot Gene Lists
 
-Pre-made gene lists in `examples/` that produce well-characterized results. Use these to verify your installation works and to understand what CodonScope output looks like for genes with known codon usage biology.
+Pre-made gene lists for testing and demonstrating CodonScope. Located in two directories:
 
-### Yeast: Ribosomal proteins (132 genes)
+### `pilot_gene_lists/` — Curated test cases (12 files)
 
-**File:** `examples/yeast_rp_genes.txt`
+Comprehensive collection of gene lists with literature citations, expected results,
+and biological context. See [`pilot_gene_lists/README.md`](pilot_gene_lists/README.md) for details.
 
-The canonical positive control for translational selection. Yeast RP genes are among the most highly expressed genes and show extreme codon optimization.
-
-```bash
-python3 -m codonscope.cli report --species yeast --genes examples/yeast_rp_genes.txt --output yeast_rp_report.html
-```
-
-**Expected results across modes:**
-
-| Mode | What you should see |
-|------|-------------------|
-| **1 (Composition)** | Strong enrichment for optimal codons (AAG, GCT, AGA, TTG, GGT, TCC). Depletion of rare codons (ATA, AGG, CTG, TCG, ACG). Many codons significant at FDR < 0.05. |
-| **2 (Demand)** | Optimal codons enriched in demand vs genome. Moderate Z-scores (~1.7) because RP genes already dominate ~72% of yeast translational demand. |
-| **3 (Profile)** | High wtAI across the gene body (above genome average). Visible 5' ramp: first ~30-50 codons have lower optimality than the body. |
-| **4 (Collision)** | Low FS enrichment ratio (~1.0 or below). High FF proportion. Highly expressed genes evolve to minimize ribosome collisions. |
-| **5 (Disentangle)** | Primarily **synonymous-driven** bias. The amino acid composition is not unusual, but the *choice* of synonymous codons is strongly skewed toward tRNA-abundant codons. Drivers: tRNA supply and wobble avoidance. |
-| **6 (Cross-species)** | Low RSCU correlation with human orthologs (mean r ~0.13). Yeast and human have different preferred codons for the same amino acids, reflecting different tRNA pools. |
-
-### Yeast: Gcn4 target genes — amino acid biosynthesis (55 genes)
-
-**File:** `examples/yeast_gcn4_targets.txt`
-
-Genes activated by the Gcn4 transcription factor during amino acid starvation. Includes arginine, histidine, leucine, lysine, tryptophan, methionine, serine, and threonine biosynthesis enzymes.
+| File | Species | Genes | Primary signal |
+|------|---------|-------|----------------|
+| `yeast_gcn4_targets.txt` | yeast | 54 | AA-driven (Gly enrichment) |
+| `yeast_ribosomal_proteins.txt` | yeast | 132 | Synonymous-driven (translational selection) |
+| `yeast_trm4_targets.txt` | yeast | 39 | TTG enrichment (Trm4/m5C modification) |
+| `yeast_trm9_targets.txt` | yeast | 50 | AGA/GAA enrichment (Trm9/mcm5s2U modification) |
+| `human_ribosomal_proteins.txt` | human | 80 | Mixed (GC3 + selection) |
+| `human_5top_mrnas.txt` | human | 115 | Translational regulation (mTOR/LARP1) |
+| `human_proliferation_myc.txt` | human | 200 | GC3 bias (NOT selection; Pouyet 2017) |
+| `human_differentiation_emt.txt` | human | 200 | GC3 bias, opposite direction to MYC |
+| `human_secreted_proteins.txt` | human | 53 | AA-driven (signal peptide, collagens) |
+| `human_isr_upregulated.txt` | human | 18 | **Negative control** (uORF mechanism) |
+| `human_membrane_proteins.txt` | human | 50 | AA-driven (hydrophobic TM domains) |
+| `cross_species_rp_yeast.txt` | yeast | 75 | Mode 6: low RSCU correlation (~0.13) |
 
 ```bash
-python3 -m codonscope.cli report --species yeast --genes examples/yeast_gcn4_targets.txt --output yeast_gcn4_report.html
+# Example usage
+python3 -m codonscope.cli report --species yeast --genes pilot_gene_lists/yeast_gcn4_targets.txt --output gcn4_report.html
+python3 -m codonscope.cli report --species human --genes pilot_gene_lists/human_proliferation_myc.txt --output myc_report.html
 ```
 
-**Expected results:**
+### `examples/` — Quick-start gene lists
 
-| Mode | What you should see |
-|------|-------------------|
-| **1 (Composition)** | GGT-containing dicodons enriched (glycine biosynthesis genes). Less extreme monocodon bias than RP genes. |
-| **5 (Disentangle)** | Primarily **AA-driven** bias. Glycine is over-represented because many of these enzymes use glycine as a substrate or product. The codon bias reflects amino acid composition, not synonymous choice. |
-| **3 (Profile)** | Moderate optimality (between genome average and RP genes). Less pronounced ramp than RP genes because these are moderately expressed. |
-
-*This is a good contrast to RP genes: Gcn4 targets show AA-driven signals while RP genes show synonymous-driven signals.*
-
-### Yeast: Glycolytic enzymes (17 genes)
-
-**File:** `examples/yeast_glycolytic.txt`
-
-Core glycolysis and fermentation pathway (hexokinase through alcohol dehydrogenase). Among the most highly expressed yeast genes on glucose.
-
-```bash
-python3 -m codonscope.cli report --species yeast --genes examples/yeast_glycolytic.txt --output yeast_glycolytic_report.html
-```
-
-**Expected results:**
-
-| Mode | What you should see |
-|------|-------------------|
-| **1 (Composition)** | Similar direction to RP genes (optimal codons enriched) but fewer genes, so fewer codons reach significance. |
-| **3 (Profile)** | High wtAI throughout, similar to RP genes. Clear 5' ramp. |
-| **5 (Disentangle)** | Synonymous-driven, like RP genes. Both gene sets are under strong translational selection. |
-
-*Note: Only 17 genes, so statistical power is limited. Some effects visible in RP genes may not reach significance here.*
-
-### Human: Ribosomal proteins (94 genes)
-
-**File:** `examples/human_rp_genes.txt`
-
-Human cytoplasmic ribosomal protein genes. Includes RPL/RPS structural components and some RPS6 kinase family members.
-
-```bash
-python3 -m codonscope.cli report --species human --genes examples/human_rp_genes.txt --output human_rp_report.html
-```
-
-**Expected results:**
-
-| Mode | What you should see |
-|------|-------------------|
-| **1 (Composition)** | Significant codon bias. Direction differs from yeast (human and yeast prefer different synonymous codons). |
-| **2 (Demand)** | Run with `--tissue` to see tissue-specific effects. RP genes are highly expressed across all tissues. |
-| **5 (Disentangle)** | Mix of synonymous-driven and AA-driven. Human RP genes have both unusual amino acid composition (Lys/Arg-rich for RNA binding) and synonymous codon preferences. |
-
-### Human: Collagen genes (21 genes)
-
-**File:** `examples/human_collagen_genes.txt`
-
-Collagen proteins contain a characteristic Gly-X-Y tripeptide repeat, making glycine ~33% of residues vs ~7% genome average. Also enriched for proline (X and Y positions).
-
-```bash
-python3 -m codonscope.cli report --species human --genes examples/human_collagen_genes.txt --output human_collagen_report.html
-```
-
-**Expected results:**
-
-| Mode | What you should see |
-|------|-------------------|
-| **1 (Composition)** | Very strong GGC/GGA/GGT enrichment (glycine codons). CCT/CCA/CCG enrichment (proline codons). |
-| **5 (Disentangle)** | Strongly **AA-driven**. The signal is almost entirely amino acid composition (Gly, Pro), not synonymous codon choice. This is the clearest example of AA-driven bias in the genome. |
-| **3 (Profile)** | Distinctive profile reflecting the repetitive Gly-X-Y structure. |
-
-*Collagens are the best human positive control for Mode 5 AA-driven attribution.*
-
-### Mouse: Ribosomal proteins (99 genes)
-
-**File:** `examples/mouse_rp_genes.txt`
-
-Mouse cytoplasmic ribosomal protein genes. Results parallel human RP genes (same gene families, similar codon preferences).
-
-```bash
-python3 -m codonscope.cli report --species mouse --genes examples/mouse_rp_genes.txt --output mouse_rp_report.html
-```
-
-**Expected results:** Similar to human RP genes. Mouse and human share mammalian tRNA pools, so preferred codons are largely the same.
+| File | Species | Genes | Description |
+|------|---------|-------|-------------|
+| `yeast_rp_genes.txt` | yeast | 132 | Ribosomal proteins (fastest, strongest signal) |
+| `human_rp_genes.txt` | human | 94 | Human ribosomal proteins |
+| `mouse_rp_genes.txt` | mouse | 99 | Mouse ribosomal proteins |
+| `yeast_trm_genes.txt` | yeast | 16 | Original Trm test genes |
 
 ### Which pilot to run first?
 
 | Goal | Recommended pilot |
 |------|------------------|
-| Verify installation works | Yeast RP genes (fastest, strongest signal) |
-| Understand Mode 5 attribution | Run yeast RP genes (synonymous) AND Gcn4 targets (AA-driven) side by side |
+| Verify installation works | `examples/yeast_rp_genes.txt` (fastest, strongest signal) |
+| Understand Mode 5 attribution | Yeast RP (synonymous) vs Gcn4 targets (AA-driven) side by side |
 | Test human expression analysis | Human RP genes with `--tissue liver` vs `--tissue brain` |
-| See AA-driven vs synonymous | Human collagens (AA-driven) vs human RP genes (mixed) |
-| Test cross-species | Yeast RP genes with `--species2 human` |
+| GC3 confound demonstration | MYC targets (high GC3) vs EMT (low GC3) — Pouyet 2017 |
+| Negative control | `human_isr_upregulated.txt` — should show no codon-level signal |
+| Cross-species comparison | `cross_species_rp_yeast.txt` with `--species2 human` |
 
 ---
 

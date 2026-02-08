@@ -1,0 +1,67 @@
+# Yeast Gcn4-regulated amino acid biosynthesis genes (55 genes)
+# Source: Natarajan et al., 'Transcriptional profiling shows that Gcn4p is a
+#   master regulator of gene expression during amino acid starvation in yeast',
+#   Mol Cell Biol 21:4347-4368 (2001).
+# These genes are transcriptionally activated by Gcn4 under amino acid starvation.
+# They encode enzymes for arginine, histidine, tryptophan, leucine, isoleucine/valine,
+# lysine, methionine, serine, threonine, asparagine, aromatic, and glycine biosynthesis,
+# plus aminoacyl-tRNA synthetases.
+# Expected CodonScope results:
+#   Mode 1: AGA-GAA dicodon enrichment Z>4; GGT-containing dicodons enriched (glycine)
+#   Mode 5: Primarily AA-driven attribution (amino acid composition bias, not synonymous choice)
+#   Mode 3: Moderate optimality (between genome average and RP genes)
+#   Mode 4: FS transitions present (moderate collision potential)
+ARG1
+ARG3
+ARG4
+ARG56
+ARG8
+HIS1
+HIS3
+HIS4
+HIS5
+TRP1
+TRP2
+TRP3
+TRP4
+TRP5
+LEU1
+LEU2
+LEU4
+ILV1
+ILV2
+ILV3
+ILV5
+ILV6
+LYS1
+LYS2
+LYS4
+LYS9
+LYS20
+MET6
+MET13
+MET17
+SER1
+SER2
+SER33
+THR1
+THR4
+GCN4
+CPA2
+GLN1
+ASN1
+ASN2
+HOM2
+HOM3
+HOM6
+SHM2
+GCV1
+GCV2
+ARO1
+ARO2
+ARO3
+ARO4
+ALA1
+GRS1
+DPS1
+THS1

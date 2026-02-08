@@ -1,0 +1,92 @@
+# Yeast ribosomal proteins for cross-species comparison — one paralog per gene (67 genes)
+# Source: SGD GO:0003735, using A-paralog where both A/B exist, single-copy where unique.
+# References:
+#   Ikemura T, 'Codon usage and tRNA content in unicellular and multicellular
+#     organisms', Mol Biol Evol 2:13-34 (1985).
+#   Sharp PM & Li WH, 'The codon adaptation index', Nucleic Acids Res
+#     15:1281-1295 (1987).
+# This list uses one paralog per gene (A-paralog convention) to enable clean
+# one-to-one ortholog mapping for Mode 6 cross-species comparison. Human
+# RPL11 maps to yeast RPL11A, etc.
+# Expected CodonScope results:
+#   Mode 6: Low RSCU correlation (~0.1-0.15) with human RP orthologs despite
+#     both gene sets being strongly codon-optimized — they use DIFFERENT preferred
+#     codons because yeast and human have different tRNA pools. This is a key
+#     biological insight: codon optimization is species-specific.
+#   17/18 amino acids have different preferred codons between yeast and human
+#     RP orthologs.
+RPL1A
+RPL2A
+RPL3
+RPL4A
+RPL5
+RPL6A
+RPL7A
+RPL8A
+RPL9A
+RPL10
+RPL11A
+RPL12A
+RPL13A
+RPL14A
+RPL15A
+RPL16A
+RPL17A
+RPL18A
+RPL19A
+RPL20A
+RPL21A
+RPL22A
+RPL23A
+RPL24A
+RPL25
+RPL26A
+RPL27A
+RPL28
+RPL29
+RPL30
+RPL31A
+RPL32
+RPL33A
+RPL34A
+RPL35A
+RPL36A
+RPL37A
+RPL38
+RPL39
+RPL40A
+RPL41A
+RPL42A
+RPL43A
+RPS0A
+RPS1A
+RPS2
+RPS3
+RPS4A
+RPS5
+RPS6A
+RPS7A
+RPS8A
+RPS9A
+RPS10A
+RPS11A
+RPS12
+RPS13
+RPS14A
+RPS15
+RPS16A
+RPS17A
+RPS18A
+RPS19A
+RPS20
+RPS21A
+RPS22A
+RPS23A
+RPS24A
+RPS25A
+RPS26A
+RPS27A
+RPS28A
+RPS29A
+RPS30A
+RPS31

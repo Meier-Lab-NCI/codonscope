@@ -1,0 +1,147 @@
+# Human 5'TOP mRNAs — mTOR-regulated translational targets (115 genes)
+# Source: Compiled from multiple studies characterizing 5' terminal
+#   oligopyrimidine (TOP) motif-containing mRNAs:
+#   Thoreen CC et al., 'A unifying model for mTORC1-mediated regulation of
+#     mRNA translation', Nature 485:109-113 (2012).
+#   Philippe L et al., 'Global analysis of LARP1 translation targets reveals
+#     tunable and dynamic features of 5' TOP motifs', Proc Natl Acad Sci USA
+#     117:5319-5328 (2020).
+#   Cockman E et al., 'TOP mRNPs: molecular mechanisms and principles of
+#     regulation', Biomolecules 10:969 (2020). [Review]
+#   Meyuhas O & Kahan T, 'The race to decipher the top secrets of TOP mRNAs',
+#     Biochim Biophys Acta 1849:801-811 (2015).
+#   Iadevaia V et al., 'All translation elongation factors and the e, f, and h
+#     subunits of translation initiation factor 3 are encoded by 5'-terminal
+#     oligopyrimidine (TOP) mRNAs', RNA 14:1730-1736 (2008).
+# The 5'TOP motif consists of a 5'-cytidine followed by 4-15 pyrimidines.
+# These mRNAs are translationally repressed when mTOR is inhibited (via
+# LARP1 binding) and activated when mTOR is active (growth signals).
+# Expected CodonScope results:
+#   Mode 1: Strong codon bias reflecting high expression (GC3-enriched)
+#   Mode 2: Among the highest demand-contributing genes in most tissues
+#   Mode 3: High optimality throughout with potential 5' ramp
+#   Mode 5: Mixed — both AA-driven (enrichment for basic amino acids in
+#     ribosomal proteins) and synonymous-driven components
+#   Key feature: this gene set is TRANSLATIONALLY regulated — the codon
+#     bias reflects evolutionary optimization for high translational output,
+#     not transcriptional regulation
+# All 80 cytoplasmic ribosomal proteins (core structural, no paralogs)
+RPL3
+RPL4
+RPL5
+RPL6
+RPL7
+RPL7A
+RPL8
+RPL9
+RPL10
+RPL10A
+RPL11
+RPL12
+RPL13
+RPL13A
+RPL14
+RPL15
+RPL17
+RPL18
+RPL18A
+RPL19
+RPL21
+RPL22
+RPL23
+RPL23A
+RPL24
+RPL26
+RPL27
+RPL27A
+RPL28
+RPL29
+RPL30
+RPL31
+RPL32
+RPL34
+RPL35
+RPL35A
+RPL36
+RPL36A
+RPL37
+RPL37A
+RPL38
+RPL39
+RPL41
+RPLP0
+RPLP1
+RPLP2
+UBA52
+RPSA
+RPS2
+RPS3
+RPS3A
+RPS4X
+RPS5
+RPS6
+RPS7
+RPS8
+RPS9
+RPS10
+RPS11
+RPS12
+RPS13
+RPS14
+RPS15
+RPS15A
+RPS16
+RPS17
+RPS18
+RPS19
+RPS20
+RPS21
+RPS23
+RPS24
+RPS25
+RPS26
+RPS27
+RPS27A
+RPS28
+RPS29
+FAU
+RACK1
+# Translation elongation factors (5) — Iadevaia 2008
+EEF1A1
+EEF1B2
+EEF1G
+EEF1D
+EEF2
+# Translation initiation factors with 5'TOP (8)
+EIF3E
+EIF3F
+EIF3H
+EIF4B
+EIF3A
+EIF3C
+EIF3G
+EIF3I
+# Poly(A)-binding protein (1)
+PABPC1
+# Other established non-ribosomal 5'TOP mRNAs (21)
+NPM1
+NAP1L1
+HNRNPA1
+VIM
+TPT1
+PTMA
+TCOF1
+DKC1
+NOP56
+NOP58
+FBL
+SNU13
+DDX21
+GNL3
+SNRPD2
+SNRPE
+SNRPB
+NACA
+ABCF1
+CSDE1
+HSP90AB1

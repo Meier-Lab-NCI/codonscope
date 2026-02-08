@@ -1,0 +1,156 @@
+# Yeast (S. cerevisiae) cytoplasmic ribosomal protein genes (~128 genes)
+# Source: SGD GO:0003735 (structural constituent of ribosome)
+# References:
+#   Ikemura T, 'Codon usage and tRNA content in unicellular and multicellular
+#     organisms', Mol Biol Evol 2:13-34 (1985).
+#   Sharp PM & Li WH, 'The codon adaptation index — a measure of directional
+#     synonymous codon usage bias, and its potential applications', Nucleic Acids
+#     Res 15:1281-1295 (1987).
+# Yeast RP genes are the canonical example of translational selection on synonymous
+# codons. Both paralogs (A and B) are included where they exist.
+# Expected CodonScope results:
+#   Mode 1: Extreme codon optimization — AAG over AAA (Lys), GGT over other Gly,
+#     TTG over other Leu, GCT over other Ala, AGA over other Arg
+#   Mode 2: Moderate Z-scores (~1.7) because RP genes dominate ~72% of yeast
+#     translational demand — they ARE the background
+#   Mode 3: Highest tAI/wtAI scores in the genome; visible 5' ramp (first 30-50
+#     codons have lower optimality than the gene body)
+#   Mode 4: Low FS enrichment ratio (~1.0 or below); high FF proportion —
+#     highly expressed genes minimize ribosome collisions
+#   Mode 5: Synonymous-driven attribution — amino acid composition is normal,
+#     but synonymous codon choice is strongly skewed toward tRNA-abundant codons.
+#     Drivers: tRNA supply and wobble avoidance.
+#   Mode 6: Low RSCU correlation with human orthologs (mean r ~0.13) — yeast and
+#     human use different preferred codons for the same amino acids
+RPL1A
+RPL1B
+RPL2A
+RPL2B
+RPL3
+RPL4A
+RPL4B
+RPL5
+RPL6A
+RPL6B
+RPL7A
+RPL7B
+RPL8A
+RPL8B
+RPL9A
+RPL9B
+RPL10
+RPL11A
+RPL11B
+RPL12A
+RPL12B
+RPL13A
+RPL13B
+RPL14A
+RPL14B
+RPL15A
+RPL15B
+RPL16A
+RPL16B
+RPL17A
+RPL17B
+RPL18A
+RPL18B
+RPL19A
+RPL19B
+RPL20A
+RPL20B
+RPL21A
+RPL21B
+RPL22A
+RPL22B
+RPL23A
+RPL23B
+RPL24A
+RPL24B
+RPL25
+RPL26A
+RPL26B
+RPL27A
+RPL27B
+RPL28
+RPL29
+RPL30
+RPL31A
+RPL31B
+RPL32
+RPL33A
+RPL33B
+RPL34A
+RPL34B
+RPL35A
+RPL35B
+RPL36A
+RPL36B
+RPL37A
+RPL37B
+RPL38
+RPL39
+RPL40A
+RPL40B
+RPL41A
+RPL41B
+RPL42A
+RPL42B
+RPL43A
+RPL43B
+RPS0A
+RPS0B
+RPS1A
+RPS1B
+RPS2
+RPS3
+RPS4A
+RPS4B
+RPS5
+RPS6A
+RPS6B
+RPS7A
+RPS7B
+RPS8A
+RPS8B
+RPS9A
+RPS9B
+RPS10A
+RPS10B
+RPS11A
+RPS11B
+RPS12
+RPS13
+RPS14A
+RPS14B
+RPS15
+RPS16A
+RPS16B
+RPS17A
+RPS17B
+RPS18A
+RPS18B
+RPS19A
+RPS19B
+RPS20
+RPS21A
+RPS21B
+RPS22A
+RPS22B
+RPS23A
+RPS23B
+RPS24A
+RPS24B
+RPS25A
+RPS25B
+RPS26A
+RPS26B
+RPS27A
+RPS27B
+RPS28A
+RPS28B
+RPS29A
+RPS29B
+RPS30A
+RPS30B
+RPS31

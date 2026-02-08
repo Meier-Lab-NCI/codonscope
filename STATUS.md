@@ -356,15 +356,23 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 - **Colab notebook UX** — tissue/cell line dropdowns (GTEx tissues + common cell lines), parameter descriptions for KMER_SIZE (mono/di/tricodon), BACKGROUND (all vs matched), METHOD (wtai vs tai), expanded interpretation guide with parameter table, expression file format example
 
 ### Chunk 13: Pilot Gene Lists + Colab UX
-- **6 pilot gene list files** in `examples/` with documented expected results:
-  - `yeast_rp_genes.txt` (132) — canonical translational selection, synonymous-driven
-  - `yeast_gcn4_targets.txt` (55) — amino acid biosynthesis, AA-driven Mode 5 signal
-  - `yeast_glycolytic.txt` (17) — glycolysis/fermentation, codon-optimized
-  - `human_rp_genes.txt` (94) — mammalian RP genes
-  - `human_collagen_genes.txt` (21) — Gly-X-Y repeats, strongest AA-driven signal
-  - `mouse_rp_genes.txt` (99) — parallels human RP results
-- **README "Pilot Gene Lists" section** — per-mode expected results tables, "which pilot to run first" guide
-- **Colab pilot set dropdown** — `PILOT_SET` selector auto-fills 6 preset gene lists plus "Custom" option
+- **12 curated pilot gene list files** in `pilot_gene_lists/` with literature citations, expected results, and biological context:
+  - `yeast_gcn4_targets.txt` (54) — Natarajan 2001, AA-driven (Gly enrichment)
+  - `yeast_ribosomal_proteins.txt` (132) — Ikemura 1985, Sharp & Li 1987, synonymous-driven
+  - `yeast_trm4_targets.txt` (39) — Chan 2012, >=90% TTG leucine (Trm4/m5C targets)
+  - `yeast_trm9_targets.txt` (50) — Begley 2007, top AGA/GAA enriched (Trm9/mcm5s2U)
+  - `human_ribosomal_proteins.txt` (80) — dos Reis 2004, core 40S+60S components
+  - `human_5top_mrnas.txt` (115) — Thoreen 2012, Philippe 2020, mTOR/LARP1-regulated
+  - `human_proliferation_myc.txt` (200) — MSigDB HALLMARK_MYC_TARGETS_V1 + Pouyet 2017 GC3 caveat
+  - `human_differentiation_emt.txt` (200) — MSigDB HALLMARK_EMT + Pouyet 2017 GC3 caveat
+  - `human_secreted_proteins.txt` (53) — Zhou 2024, signal peptide + collagen AA-driven
+  - `human_isr_upregulated.txt` (18) — Harding 2000, **negative control** (uORF mechanism)
+  - `human_membrane_proteins.txt` (50) — hydrophobic TM domains, AA-driven Mode 5 test
+  - `cross_species_rp_yeast.txt` (75) — A-paralog RP genes for Mode 6 comparison
+- **pilot_gene_lists/README.md** — summary table, full reference list, expected results matrix, validation table
+- All lists validated: 100% mapping for 9/12 lists, 99-99.5% for MSigDB lists (MYC/EIF4G2/VEGFA not in MANE Select)
+- Quick-start lists remain in `examples/`: yeast/human/mouse RP genes + yeast_trm_genes
+- **Colab pilot set dropdown** — `PILOT_SET` selector auto-fills preset gene lists plus "Custom" option
 - **Zip README.txt** — every exported zip includes pilot gene list reference
 
 ### Earlier Feature Additions (Chunks 7-9)
