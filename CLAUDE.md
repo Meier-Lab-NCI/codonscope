@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**269 tests passing. 15 commits on main.**
+**338 tests passing (+ 6 skipped pending re-download). 15 commits on main.**
 
 ### Build progress
 
@@ -24,19 +24,20 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 8 | Mode 6 (cross-species comparison) | ✅ Done |
 | 9 | HTML report generation | ✅ Done |
 | 10 | Mouse species support | ✅ Done |
+| 11 | Enhanced ID resolution + mouse data sources | ✅ Done |
 
 ### What exists (files and what they do)
 
 **Core engine:**
 - `codonscope/__init__.py` — version 0.1.0
 - `codonscope/core/codons.py` — k-mer counting engine (mono/di/tri), `sequence_to_codons()`, `count_kmers()`, `kmer_frequencies()`, `all_possible_kmers()`, `SENSE_CODONS` (61 sense codons)
-- `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Resolves yeast (systematic name, common name), human (HGNC symbol, ENSG, ENST, Entrez ID), and mouse (MGI symbol, ENSMUSG, ENSMUST) gene identifiers. `get_sequences()` accepts IDMapping, dict, or list[str].
+- `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Enhanced multi-type ID resolution with auto-detection: yeast (systematic name, common name, SGD ID, UniProt), human (HGNC symbol, ENSG, ENST, Entrez ID, RefSeq NM_, UniProt, HGNC aliases), mouse (MGI symbol, ENSMUSG, ENSMUST, MGI ID, Entrez ID, UniProt, MGI synonyms). Supports mixed ID types per gene list. `get_sequences()` accepts IDMapping, dict, or list[str].
 - `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline
 - `codonscope/core/optimality.py` — `OptimalityScorer` class: loads wobble_rules.tsv, computes per-codon tAI and wtAI weights (normalised 0–1, pseudocount for zero-copy anticodons). Provides `gene_tai()`, `gene_wtai()`, `per_position_scores()`, `smooth_profile()`, `classify_codons()` (fast/slow by median threshold).
 - `codonscope/core/orthologs.py` — `OrthologDB` class: bidirectional gene mapping between species. Loads TSV from `~/.codonscope/data/orthologs/`. `map_genes()`, `get_all_pairs()`, `n_pairs`.
 
 **Data layer:**
-- `codonscope/data/download.py` — `download("yeast")`, `download("human")`, and `download("mouse")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds, creates expression data. Curated wobble rule tables for all species (mouse reuses human/mammalian rules). Also: `download_expression()` standalone, `download_orthologs()` for cross-species ortholog mapping. Yeast expression from hardcoded rich-media estimates, human expression from GTEx v8 median TPM, mouse expression from hardcoded estimates.
+- `codonscope/data/download.py` — `download("yeast")`, `download("human")`, and `download("mouse")`. Downloads CDS sequences, tRNA copy numbers (GtRNAdb with 3-strategy parser + hardcoded fallbacks), wobble decoding rules, pre-computes mono/di/tri backgrounds, creates expression data. Mouse uses BioMart canonical transcripts (with longest-CDS fallback). Downloads UniProt mapping (all species), MGI mapping (mouse), and captures SGD IDs (yeast). Curated wobble rule tables for all species (mouse reuses human/mammalian rules). Also: `download_expression()` standalone, `download_orthologs()` for cross-species ortholog mapping (human-yeast name-matching, mouse-human and mouse-yeast via Ensembl Compara FTP). Yeast expression from hardcoded rich-media estimates, human expression from GTEx v8 median TPM, mouse expression from hardcoded estimates.
 
 **Analysis modes:**
 - `codonscope/modes/mode1_composition.py` — `run_composition()` with "all" or "matched" (length+GC) backgrounds, KS diagnostics, volcano + bar chart plots. Accepts k=1/2/3 (aliases: `kmer`, `kmer_size`).
@@ -52,7 +53,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 **CLI:**
 - `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `composition`, `demand`, `profile`, `collision`, `disentangle`, `compare`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
 
-**Tests (269 passing):**
+**Tests (338 passing, 6 skipped):**
 - `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds
 - `tests/test_statistics.py` — 29 tests: bootstrap, BH correction, Cohen's d, KS diagnostics, yeast positive controls (RP genes, YEF3)
 - `tests/test_mode1.py` — 19 tests: gene list parsing, composition pipeline, matched background, diagnostics, CLI, RP positive controls
@@ -63,35 +64,42 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `tests/test_mode5.py` — 27 tests: codon table, AA frequencies, RSCU, attribution logic, summary, Gcn4 + RP integration tests, CLI
 - `tests/test_mode6.py` — 36 tests: OrthologDB (7 unit tests), RSCU correlation (4 tests), ortholog download (6 tests), RP comparison yeast→human (10 tests), RP comparison human→yeast (4 tests), divergent analysis, output files, CLI
 - `tests/test_report.py` — 18 tests: HTML report generation (RP + Gcn4 gene sets), all mode sections present, embedded base64 images, gene summary, unmapped genes, cross-species report, CLI, self-contained HTML, inline CSS, output directory creation
+- `tests/test_id_resolution.py` — 75 tests: GtRNAdb parser (8 tests: 3 formats, T→U, skip iMet/SeC/Sup, mixed), ID regex patterns (10 tests), ID type detection (12 tests across species), backward-compatible resolution (18 tests: yeast/human/mouse), new ID types (10 tests: RefSeq, SGD, UniProt, MGI, Entrez), mixed ID lists (5 tests), download function imports (7 tests), ortholog dispatcher (4 tests), parse function unit tests (5 tests), IDMapping compat (3 tests). 6 tests skipped until mapping files generated by re-download.
 
 ### Species data (in `~/.codonscope/data/species/`)
 
 **Yeast (S. cerevisiae):**
 - 6,685 validated ORFs from SGD (`orf_coding_all.fasta.gz`)
 - Mitochondrial ORFs (Q0*) excluded from backgrounds
-- tRNA: hardcoded fallback (GtRNAdb parse fails)
+- Gene ID map includes: systematic_name, common_name, sgd_id (SGD:S000001855 format)
+- Additional mappings: `uniprot_mapping.tsv` (UniProt SwissProt)
+- tRNA: 3-strategy GtRNAdb parser + hardcoded fallback
 - Expression: `expression_rich_media.tsv` — hardcoded TPM estimates (RP genes 3000, glycolytic 500-5000, median 15, dubious 0.5)
-- Files: `cds_sequences.fa.gz`, `gene_id_map.tsv`, `trna_copy_numbers.tsv`, `wobble_rules.tsv`, `background_{mono,di,tri}.npz`, `gene_metadata.npz`, `expression_rich_media.tsv`
+- Files: `cds_sequences.fa.gz`, `gene_id_map.tsv`, `trna_copy_numbers.tsv`, `wobble_rules.tsv`, `background_{mono,di,tri}.npz`, `gene_metadata.npz`, `expression_rich_media.tsv`, `uniprot_mapping.tsv`
 
 **Human:**
 - 19,229 validated CDS from MANE Select v1.5 (NCBI summary + Ensembl CDS FASTA)
 - Gene ID map includes: systematic_name (ENSG), common_name (HGNC symbol), ensembl_transcript, refseq_transcript, entrez_id
-- tRNA: hardcoded fallback (GtRNAdb parse fails)
+- Additional mappings: `uniprot_mapping.tsv` (UniProt SwissProt)
+- tRNA: 3-strategy GtRNAdb parser + hardcoded fallback
 - Expression: GTEx v8 median TPM per tissue (`expression_gtex.tsv.gz`), ~56K genes × 54 tissues
-- Same file structure as yeast plus `expression_gtex.tsv.gz`
+- Same file structure as yeast plus `expression_gtex.tsv.gz`, `uniprot_mapping.tsv`
 
 **Mouse (M. musculus):**
-- ~21,500 validated CDS from Ensembl GRCm39 (longest CDS per gene)
-- Gene ID map includes: systematic_name (ENSMUSG), common_name (MGI symbol), ensembl_transcript (ENSMUST)
-- tRNA: hardcoded fallback (GtRNAdb parse fails), same mammalian counts as human
+- ~21,500 validated CDS from Ensembl GRCm39 (BioMart canonical transcripts preferred, longest CDS fallback)
+- Gene ID map includes: systematic_name (ENSMUSG), common_name (MGI symbol), ensembl_transcript (ENSMUST), entrez_id
+- Additional mappings: `mgi_mapping.tsv` (MGI IDs, synonyms, Entrez), `uniprot_mapping.tsv` (UniProt SwissProt)
+- tRNA: 3-strategy GtRNAdb parser + hardcoded fallback, same mammalian counts as human
 - Wobble rules: reuses human/mammalian rules (same modification machinery)
 - Expression: `expression_estimates.tsv` — hardcoded TPM estimates (RP genes 3000, Actb 5000, Gapdh 3000, median 15)
-- Files: same structure as yeast plus `expression_estimates.tsv`
+- Files: same structure as yeast plus `expression_estimates.tsv`, `mgi_mapping.tsv`, `uniprot_mapping.tsv`
 
 **Orthologs (in `~/.codonscope/data/orthologs/`):**
 - `human_yeast.tsv` — 830 one-to-one ortholog pairs (human ENSG → yeast systematic name)
-- Built via name matching + curated renames (~150 entries including RP paralog mapping: human RPL11 → yeast RPL11A)
-- BioMart query included but currently fails (filter name changed); name-matching fallback works well
+- `human_mouse.tsv` — Ensembl Compara one-to-one orthologs (mouse-human, ~16K pairs expected)
+- `mouse_yeast.tsv` — Ensembl Compara one-to-one orthologs (mouse-yeast, ~2-3K pairs expected)
+- human-yeast: name matching + curated renames (~150 entries including RP paralog mapping)
+- mouse-human, mouse-yeast: Ensembl Compara FTP bulk TSV (auto-discovers release number)
 - 64/132 yeast RP genes have human orthologs mapped
 
 ### Positive controls (verified)
@@ -103,17 +111,17 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ### Known issues
 
-1. **GtRNAdb parser broken.** Both yeast and human tRNA downloads return 0 parsed anticodons. The GtRNAdb FASTA header format may have changed. Hardcoded fallback tables work fine. Low priority — fix if someone needs live tRNA data.
+1. **GtRNAdb parser fixed.** Now supports 3 header formats: old (Type:/Anticodon:), modern (tRNA-Ala-AGC), and compact (trna34-AlaAGC). Skips iMet/SeC/Sup/Undet. T→U conversion applied in all strategies. Hardcoded fallback tables remain as backup.
 2. **MANE version hardcoded.** URL contains `v1.5`. When NCBI releases v1.6+, the download URL will 404 and need updating. The Ensembl CDS URL uses `current_fasta` (auto-updates). GTEx URL updated to `adult-gtex/bulk-gex/v8/rna-seq/` (old `gtex_analysis_v8` bucket returned 404).
 3. **Tricodon backgrounds have no per-gene matrix.** The 226,981 × N_genes matrix is too large. Tricodon analysis uses analytic SE (`std / sqrt(n_genes)`) instead of bootstrap. This is less accurate for small gene sets.
 4. **Dicodon background files are large.** Human di background is ~280MB (19K genes × 3,721 dicodons × float32). Consider sparse storage if disk space is a concern.
 5. **Mode 5 synonymous driver classification is heuristic.** Uses simple rules (Watson-Crick + enriched → wobble avoidance, high tRNA copies + enriched → tRNA supply). A more rigorous approach would use per-family regression.
 6. **Yeast expression is approximate.** Hardcoded TPM estimates, not measured. RP genes assigned uniform 3000 TPM (real values vary by paralog). RP genes end up as ~72% of genome demand; real fraction is ~30-40%. This makes Mode 2 Z-scores modest for RP genes since they dominate both gene-set and genome demand. GTEx human expression is real measured data.
-7. **Ortholog mapping is name-based.** BioMart query fails (Ensembl filter name changed). Using gene name matching + 150 curated renames instead. Covers 830 human-yeast pairs. True Ensembl Compara orthologs would give better coverage (~1200+ pairs). Fix BioMart XML query when possible.
+7. **Ortholog mapping is hybrid.** Human-yeast uses name matching + 150 curated renames (830 pairs). Mouse-human and mouse-yeast use Ensembl Compara FTP bulk TSV (one-to-one orthologs). Compara requires downloading a large (~100MB) species-specific TSV.
 8. **RP paralog mapping is approximate.** Human RPL11 maps to yeast RPL11A (not RPL11B). In reality both paralogs are near-identical. The A-paralog convention is consistent but arbitrary.
-9. **Mouse has no MANE equivalent.** Uses longest valid CDS per gene from Ensembl GRCm39. Some genes may have non-canonical transcript selected.
-10. **Mouse orthologs not yet implemented.** Mode 6 cross-species comparison currently only supports human-yeast. Mouse-human/mouse-yeast ortholog tables could be added.
-11. **Mouse expression is estimated.** Hardcoded TPM approximations, not tissue-specific measured data. Cell line expression not available for mouse.
+9. **Mouse uses BioMart canonical transcripts.** Falls back to longest valid CDS per gene if BioMart query fails or returns <5000 results.
+10. **Mouse expression is estimated.** Hardcoded TPM approximations, not tissue-specific measured data. Cell line expression not available for mouse.
+11. **New mapping files need re-download.** UniProt, MGI, SGD ID, and Entrez ID mappings are only created during fresh downloads. Existing data directories need `download('species')` re-run to populate these.
 
 ## Design decisions (read before coding)
 
@@ -124,7 +132,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 5. **Bootstrap Z-scores, not analytic.** Resample N genes from genome 10,000 times for SE estimation. Exception: tricodons use analytic SE (no per-gene matrix).
 6. **Benjamini-Hochberg correction** across all k-mers within each mode.
 7. **IDMapping class.** `resolve_ids()` returns an `IDMapping` object that behaves like `dict[input_id → systematic_name]`. Has `.unmapped`, `.n_mapped`, `.n_unmapped`. Backwards compat: `result["mapping"]` etc. still works.
-8. **Species-dispatched ID resolution.** Yeast uses regex for systematic names + case-insensitive common name lookup. Human uses ENSG/ENST regex, numeric Entrez lookup, and case-insensitive HGNC symbol lookup. Mouse uses ENSMUSG/ENSMUST regex + case-insensitive MGI symbol lookup.
+8. **Multi-type ID resolution with auto-detection.** `_detect_id_type()` classifies input IDs by pattern (regex), then `_resolve_single_id()` applies species-specific resolution in priority order: Ensembl gene IDs → Ensembl transcript IDs → yeast systematic → species-specific (SGD, MGI, RefSeq NM_) → Entrez → UniProt → gene symbol → alias/synonym. Supports mixed ID types per gene list. Debug logging shows detected type for each ID.
 9. **Mode 2 demand weighting.** Weight = TPM × n_codons per gene. Demand vector = weighted mean of per-gene codon frequencies. Weighted bootstrap: sample N genes, compute their weighted demand, repeat 10K times. Human uses GTEx tissue-specific TPM. Yeast uses hardcoded rich-media estimates.
 10. **Mode 6 RSCU correlation.** Per-gene RSCU computed for ortholog pairs. Pearson r uses only multi-synonym codons (excludes Met, Trp). Gene-set distribution compared to genome-wide via bootstrap Z-test and Mann-Whitney U. Divergent genes analysed for different preferred codons. Ortholog data stored separately in `~/.codonscope/data/orthologs/`.
 

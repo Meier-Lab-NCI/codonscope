@@ -128,6 +128,41 @@ GTRNADB_MOUSE_URL = (
     "http://gtrnadb.ucsc.edu/genomes/eukaryota/Mmusc39/mm39-mature-tRNAs.fa"
 )
 
+# BioMart base URL (used for canonical transcripts, UniProt mapping, etc.)
+BIOMART_BASE_URL = "http://www.ensembl.org/biomart/martservice"
+
+# BioMart XML query for mouse canonical transcripts
+BIOMART_MOUSE_CANONICAL_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE Query>
+<Query virtualSchemaName="default" formatter="TSV" header="1"
+       uniqueRows="1" count="" datasetConfigVersion="0.6">
+  <Dataset name="mmusculus_gene_ensembl" interface="default">
+    <Filter name="transcript_is_canonical" excluded="0"/>
+    <Filter name="biotype" value="protein_coding"/>
+    <Attribute name="ensembl_gene_id"/>
+    <Attribute name="ensembl_transcript_id"/>
+  </Dataset>
+</Query>"""
+
+# BioMart XML for mouse Entrez IDs
+BIOMART_MOUSE_ENTREZ_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE Query>
+<Query virtualSchemaName="default" formatter="TSV" header="1"
+       uniqueRows="1" count="" datasetConfigVersion="0.6">
+  <Dataset name="mmusculus_gene_ensembl" interface="default">
+    <Filter name="biotype" value="protein_coding"/>
+    <Attribute name="ensembl_gene_id"/>
+    <Attribute name="entrezgene_id"/>
+  </Dataset>
+</Query>"""
+
+# MGI mapping file URL
+MGI_ENTREZGENE_URL = (
+    "https://www.informatics.jax.org/downloads/reports/MGI_EntrezGene.rpt"
+)
+
 # ── Fallback tRNA gene copy numbers (Phizicky & Hopper 2010, Chan et al. 2010)
 YEAST_TRNA_FALLBACK: dict[str, tuple[str, int]] = {
     "AAC": ("Val", 2),
@@ -549,6 +584,9 @@ def _download_yeast(species_dir: Path) -> None:
     # 5. Create expression data (hardcoded rich-media estimates)
     _create_yeast_expression(species_dir)
 
+    # 6. Download UniProt mapping
+    _download_uniprot_mapping(species_dir, "yeast")
+
     logger.info("Yeast download complete. Files in %s", species_dir)
 
 
@@ -606,6 +644,12 @@ def _parse_sgd_fasta(fasta_text: str) -> tuple[dict[str, str], list[dict]]:
         common_name = ""
         if len(tokens) >= 2 and not tokens[1].startswith("SGDID"):
             common_name = tokens[1]
+
+        # Extract SGD ID from header (format: SGDID:S000001234)
+        sgd_id = ""
+        sgd_match = re.search(r"SGDID:(S\d+)", header)
+        if sgd_match:
+            sgd_id = f"SGD:{sgd_match.group(1)}"
 
         # Skip mitochondrial ORFs (systematic names starting with Q0)
         if systematic_name.startswith("Q0"):
@@ -668,6 +712,7 @@ def _parse_sgd_fasta(fasta_text: str) -> tuple[dict[str, str], list[dict]]:
         records.append({
             "systematic_name": systematic_name,
             "common_name": common_name,
+            "sgd_id": sgd_id,
             "cds_length": len(cds),
             "gc_content": round(gc_content, 4),
             "status": status,
@@ -733,30 +778,48 @@ def _download_yeast_trna(species_dir: Path) -> None:
 def _parse_gtrnadb_fasta(fasta_text: str) -> dict[str, dict]:
     """Parse GtRNAdb mature tRNA FASTA to count genes per anticodon.
 
-    Headers look like:
-    >sacCer3.trna1-AlaAGC (1-72)  Length: 72 bp  Type: Ala  Anticodon: AGC ...
+    Supports three header formats:
+      Strategy 1 (old):  >sacCer3.trna1-AlaAGC (1-72)  Type: Ala  Anticodon: AGC ...
+      Strategy 2 (new):  >Mus_musculus_tRNA-Ala-AGC-1-1 (chr1:... Ala (AGC) ...)
+      Strategy 3 (compact): trna34-AlaAGC in the identifier
     """
+    # Skip entries for iMet, selenocysteine, suppressor, undetermined
+    _SKIP_AA = {"IMET", "SEC", "SUP", "UNDET", "SUPRESSOR", "SUPPRESSOR"}
+
     counts: dict[str, dict[str, int | str]] = {}
 
     for line in fasta_text.splitlines():
         if not line.startswith(">"):
             continue
-        # Try to extract amino acid and anticodon from the header
+
+        aa_code: str | None = None
+        anticodon: str | None = None
+
+        # Strategy 1: Old format — Type: Ala  Anticodon: AGC
         aa_match = re.search(r"Type:\s*(\w+)", line)
-        ac_match = re.search(r"Anticodon:\s*([A-Za-z]+)", line)
-        if not aa_match or not ac_match:
-            # Try alternate format: header name contains e.g. trna1-AlaAGC
-            name_match = re.search(r"trna\d+-(\w{3})(\w{3})", line)
-            if name_match:
-                aa_code = name_match.group(1)
-                anticodon = name_match.group(2).upper()
-            else:
-                continue
-        else:
+        ac_match = re.search(r"Anticodon:\s*([A-Za-z]{3})", line)
+        if aa_match and ac_match:
             aa_code = aa_match.group(1)
-            anticodon = ac_match.group(1).upper()
-            # Convert DNA anticodon to RNA-style (T→U) for consistency
-            anticodon = anticodon.replace("T", "U")
+            anticodon = ac_match.group(1).upper().replace("T", "U")
+        else:
+            # Strategy 2: Modern format — tRNA-Ala-AGC in identifier
+            new_match = re.search(r"tRNA-(\w+)-([ACGTUacgtu]{3})", line)
+            if new_match:
+                aa_code = new_match.group(1)
+                anticodon = new_match.group(2).upper().replace("T", "U")
+            else:
+                # Strategy 3: Compact format — trna34-AlaAGC
+                name_match = re.search(r"trna\d+-(\w{3})([ACGTUacgtu]{3})", line)
+                if name_match:
+                    aa_code = name_match.group(1)
+                    anticodon = name_match.group(2).upper().replace("T", "U")
+
+        if aa_code is None or anticodon is None:
+            continue
+
+        # Skip non-standard tRNA types
+        if aa_code.upper() in _SKIP_AA:
+            continue
 
         if anticodon not in counts:
             counts[anticodon] = {"amino_acid": aa_code, "gene_count": 0}
@@ -962,6 +1025,9 @@ def _download_human(species_dir: Path) -> None:
             "CCLE download failed (%s). Cell line expression will use "
             "GTEx tissue proxies as fallback.", exc
         )
+
+    # 8. Download UniProt mapping
+    _download_uniprot_mapping(species_dir, "human")
 
     logger.info("Human download complete. Files in %s", species_dir)
 
@@ -1240,7 +1306,94 @@ def _download_mouse(species_dir: Path) -> None:
     # 5. Create expression estimates
     _create_mouse_expression(species_dir)
 
+    # 6. Download MGI mapping
+    _download_mgi_mapping(species_dir)
+
+    # 7. Download UniProt mapping
+    _download_uniprot_mapping(species_dir, "mouse")
+
     logger.info("Mouse download complete. Files in %s", species_dir)
+
+
+def _fetch_mouse_canonical_transcripts() -> dict[str, str] | None:
+    """Query BioMart for canonical transcript IDs per mouse gene.
+
+    Returns:
+        {ensmusg: ensmust} dict, or None if <5000 results or on error.
+    """
+    try:
+        logger.info("Querying BioMart for mouse canonical transcripts...")
+        resp = requests.get(
+            BIOMART_BASE_URL,
+            params={"query": BIOMART_MOUSE_CANONICAL_XML},
+            timeout=120,
+        )
+        resp.raise_for_status()
+
+        text = resp.text.strip()
+        if not text or "ERROR" in text[:200]:
+            logger.warning("BioMart canonical query returned error: %s", text[:200])
+            return None
+
+        canonical_map: dict[str, str] = {}
+        for line in text.split("\n"):
+            parts = line.strip().split("\t")
+            if len(parts) < 2:
+                continue
+            ensmusg, ensmust = parts[0].strip(), parts[1].strip()
+            if ensmusg.startswith("ENSMUSG") and ensmust.startswith("ENSMUST"):
+                canonical_map[ensmusg] = ensmust
+
+        if len(canonical_map) < 5000:
+            logger.warning(
+                "BioMart returned only %d canonical transcripts (expected ~22K), ignoring",
+                len(canonical_map),
+            )
+            return None
+
+        logger.info("Got %d canonical transcripts from BioMart", len(canonical_map))
+        return canonical_map
+
+    except Exception as exc:
+        logger.warning("BioMart canonical transcript query failed: %s", exc)
+        return None
+
+
+def _fetch_mouse_entrez_ids() -> dict[str, str]:
+    """Query BioMart for mouse Entrez gene IDs.
+
+    Returns:
+        {ensmusg: entrez_id} dict.
+    """
+    try:
+        logger.info("Querying BioMart for mouse Entrez IDs...")
+        resp = requests.get(
+            BIOMART_BASE_URL,
+            params={"query": BIOMART_MOUSE_ENTREZ_XML},
+            timeout=120,
+        )
+        resp.raise_for_status()
+
+        text = resp.text.strip()
+        if not text or "ERROR" in text[:200]:
+            logger.warning("BioMart Entrez query returned error: %s", text[:200])
+            return {}
+
+        entrez_map: dict[str, str] = {}
+        for line in text.split("\n"):
+            parts = line.strip().split("\t")
+            if len(parts) < 2:
+                continue
+            ensmusg, entrez = parts[0].strip(), parts[1].strip()
+            if ensmusg.startswith("ENSMUSG") and entrez and entrez.isdigit():
+                entrez_map[ensmusg] = entrez
+
+        logger.info("Got %d Entrez IDs from BioMart", len(entrez_map))
+        return entrez_map
+
+    except Exception as exc:
+        logger.warning("BioMart Entrez ID query failed: %s", exc)
+        return {}
 
 
 def _download_mouse_cds(
@@ -1248,12 +1401,19 @@ def _download_mouse_cds(
 ) -> tuple[dict[str, str], pd.DataFrame]:
     """Download mouse CDS sequences from Ensembl and build gene ID map.
 
-    For each gene (ENSMUSG), keeps the longest valid CDS (no MANE for mouse).
+    Uses BioMart canonical transcripts when available, otherwise falls back
+    to longest valid CDS per gene.
     Validates: ACGT only, divisible by 3, starts ATG, ends stop, no internal stops.
 
     Returns:
         (sequences dict {ensmusg_id: cds}, gene_map DataFrame)
     """
+    # Try to get canonical transcript IDs from BioMart
+    canonical_map = _fetch_mouse_canonical_transcripts()
+
+    # Also fetch Entrez IDs for the gene_id_map
+    entrez_map = _fetch_mouse_entrez_ids()
+
     logger.info("Downloading mouse CDS from Ensembl...")
     resp = requests.get(ENSEMBL_MOUSE_CDS_URL, timeout=600, stream=True)
     resp.raise_for_status()
@@ -1261,8 +1421,13 @@ def _download_mouse_cds(
     raw_fasta = gzip.decompress(resp.content).decode("ascii", errors="replace")
     logger.info("Downloaded Ensembl mouse CDS FASTA, parsing...")
 
-    sequences, records = _parse_ensembl_mouse_cds(raw_fasta)
+    sequences, records = _parse_ensembl_mouse_cds(raw_fasta, canonical_map)
     logger.info("Validated %d mouse protein-coding genes", len(sequences))
+
+    # Merge Entrez IDs into records
+    if entrez_map:
+        for rec in records:
+            rec["entrez_id"] = entrez_map.get(rec["systematic_name"], "")
 
     # Save cleaned FASTA
     cds_path = species_dir / "cds_sequences.fa.gz"
@@ -1281,8 +1446,12 @@ def _download_mouse_cds(
 
 def _parse_ensembl_mouse_cds(
     fasta_text: str,
+    canonical_map: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], list[dict]]:
-    """Parse Ensembl mouse CDS FASTA, keeping longest valid CDS per gene.
+    """Parse Ensembl mouse CDS FASTA, preferring canonical transcripts.
+
+    When canonical_map is provided, prefer the canonical transcript for each gene.
+    Otherwise fall back to longest valid CDS per gene.
 
     Ensembl CDS headers look like:
     >ENSMUST00000... cds chromosome:GRCm39:... gene:ENSMUSG00000... gene_symbol:Xyz ...
@@ -1364,15 +1533,29 @@ def _parse_ensembl_mouse_cds(
     if current_ensmust is not None:
         _process_entry(current_header, "".join(current_seq_parts))
 
-    # Keep longest CDS per gene
+    # Select best CDS per gene: prefer canonical transcript, then longest
     sequences: dict[str, str] = {}
     records: list[dict] = []
+    n_canonical = 0
 
     for ensmusg, candidates in gene_candidates.items():
-        # Sort by CDS length descending, take longest
-        candidates.sort(key=lambda x: len(x[2]), reverse=True)
-        ensmust, symbol, cds = candidates[0]
+        chosen = None
 
+        # If canonical map provided, try to find the canonical transcript
+        if canonical_map and ensmusg in canonical_map:
+            canon_ensmust = canonical_map[ensmusg]
+            for ensmust, symbol, cds in candidates:
+                if ensmust == canon_ensmust:
+                    chosen = (ensmust, symbol, cds)
+                    n_canonical += 1
+                    break
+
+        # Fallback: longest CDS
+        if chosen is None:
+            candidates.sort(key=lambda x: len(x[2]), reverse=True)
+            chosen = candidates[0]
+
+        ensmust, symbol, cds = chosen
         gc_count = cds.count("G") + cds.count("C")
         gc_content = gc_count / len(cds) if len(cds) > 0 else 0.0
 
@@ -1384,6 +1567,12 @@ def _parse_ensembl_mouse_cds(
             "cds_length": len(cds),
             "gc_content": round(gc_content, 4),
         })
+
+    if canonical_map:
+        logger.info(
+            "Used %d canonical transcripts out of %d genes",
+            n_canonical, len(sequences),
+        )
 
     return sequences, records
 
@@ -1466,6 +1655,159 @@ def _create_mouse_expression(species_dir: Path) -> None:
         "mean TPM %.1f, saved to %s",
         len(df), df["tpm"].mean(), expr_path,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MGI and UniProt mapping downloads
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _download_mgi_mapping(species_dir: Path) -> None:
+    """Download MGI ID mapping for mouse genes.
+
+    Downloads MGI_EntrezGene.rpt and cross-references with gene_id_map.tsv
+    to produce mgi_mapping.tsv (mgi_id, symbol, entrez_id, synonyms, ensmusg).
+    """
+    mgi_path = species_dir / "mgi_mapping.tsv"
+
+    # Load gene_id_map for symbol → ENSMUSG lookup
+    gene_map_path = species_dir / "gene_id_map.tsv"
+    if not gene_map_path.exists():
+        logger.warning("gene_id_map.tsv not found, skipping MGI mapping download")
+        return
+
+    gene_map = pd.read_csv(gene_map_path, sep="\t")
+    symbol_to_ensmusg: dict[str, str] = {}
+    for _, row in gene_map.iterrows():
+        common = str(row.get("common_name", "")).strip()
+        sys_name = str(row["systematic_name"]).strip()
+        if common and common.upper() != "NAN":
+            symbol_to_ensmusg[common.upper()] = sys_name
+
+    try:
+        logger.info("Downloading MGI ID mapping from JAX...")
+        resp = requests.get(MGI_ENTREZGENE_URL, timeout=120)
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("MGI download failed (%s), MGI ID resolution will not be available", exc)
+        return
+
+    rows: list[dict] = []
+    for line in resp.text.splitlines():
+        if line.startswith("MGI:"):
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            mgi_id = parts[0].strip()
+            symbol = parts[1].strip()
+            status = parts[2].strip() if len(parts) > 2 else ""
+
+            # Skip withdrawn entries
+            if status.lower() == "w":
+                continue
+
+            entrez_id = parts[8].strip() if len(parts) > 8 else ""
+            synonyms = parts[9].strip() if len(parts) > 9 else ""
+
+            # Cross-reference symbol to ENSMUSG
+            ensmusg = symbol_to_ensmusg.get(symbol.upper(), "")
+
+            rows.append({
+                "mgi_id": mgi_id,
+                "symbol": symbol,
+                "entrez_id": entrez_id,
+                "synonyms": synonyms,
+                "ensmusg": ensmusg,
+            })
+
+    df = pd.DataFrame(rows)
+    df.to_csv(mgi_path, sep="\t", index=False)
+    logger.info("Saved MGI mapping: %d entries (%d with ENSMUSG) to %s",
+                len(df), df["ensmusg"].astype(bool).sum(), mgi_path)
+
+
+def _download_uniprot_mapping(species_dir: Path, species: str) -> None:
+    """Download UniProt-SwissProt mapping via BioMart for a species.
+
+    Saves uniprot_mapping.tsv (uniprot_id, systematic_name).
+    """
+    uniprot_path = species_dir / "uniprot_mapping.tsv"
+
+    dataset_map = {
+        "yeast": "scerevisiae_gene_ensembl",
+        "human": "hsapiens_gene_ensembl",
+        "mouse": "mmusculus_gene_ensembl",
+    }
+    dataset = dataset_map.get(species)
+    if not dataset:
+        logger.warning("No BioMart dataset for species %s, skipping UniProt mapping", species)
+        return
+
+    xml_query = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE Query>
+<Query virtualSchemaName="default" formatter="TSV" header="1"
+       uniqueRows="1" count="" datasetConfigVersion="0.6">
+  <Dataset name="{dataset}" interface="default">
+    <Attribute name="ensembl_gene_id"/>
+    <Attribute name="uniprotswissprot"/>
+  </Dataset>
+</Query>"""
+
+    # Load gene_id_map for Ensembl gene → systematic name mapping
+    gene_map_path = species_dir / "gene_id_map.tsv"
+    if not gene_map_path.exists():
+        logger.warning("gene_id_map.tsv not found, skipping UniProt mapping")
+        return
+
+    gene_map = pd.read_csv(gene_map_path, sep="\t")
+    ensg_to_sys: dict[str, str] = {}
+    for _, row in gene_map.iterrows():
+        ensg_to_sys[str(row["systematic_name"]).strip()] = str(row["systematic_name"]).strip()
+
+    try:
+        logger.info("Querying BioMart for %s UniProt mapping...", species)
+        resp = requests.get(
+            BIOMART_BASE_URL,
+            params={"query": xml_query},
+            timeout=120,
+        )
+        resp.raise_for_status()
+
+        text = resp.text.strip()
+        if not text or "ERROR" in text[:200]:
+            logger.warning("BioMart UniProt query returned error: %s", text[:200])
+            return
+
+        rows: list[dict] = []
+        seen: set[str] = set()
+        for line in text.split("\n"):
+            parts = line.strip().split("\t")
+            if len(parts) < 2:
+                continue
+            ensembl_id = parts[0].strip()
+            uniprot_id = parts[1].strip()
+            if not uniprot_id or not ensembl_id:
+                continue
+            # Only include genes in our gene_id_map
+            sys_name = ensg_to_sys.get(ensembl_id, "")
+            if not sys_name:
+                continue
+            key = f"{uniprot_id}:{sys_name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({
+                "uniprot_id": uniprot_id,
+                "systematic_name": sys_name,
+            })
+
+        df = pd.DataFrame(rows)
+        df.to_csv(uniprot_path, sep="\t", index=False)
+        logger.info("Saved UniProt mapping: %d entries to %s", len(df), uniprot_path)
+
+    except Exception as exc:
+        logger.warning("BioMart UniProt query failed (%s), UniProt ID resolution will not be available", exc)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2128,10 +2470,18 @@ def download_orthologs(
 
     if pair == ("human", "yeast"):
         return _download_orthologs_human_yeast(ortho_dir, base / "species")
+    elif pair == ("human", "mouse"):
+        return _download_orthologs_compara(
+            ortho_dir, base / "species", "mouse", "human",
+        )
+    elif pair == ("mouse", "yeast"):
+        return _download_orthologs_compara(
+            ortho_dir, base / "species", "mouse", "yeast",
+        )
     else:
         raise ValueError(
             f"Unsupported ortholog pair: {species1}-{species2}. "
-            "Supported: human-yeast"
+            "Supported: human-yeast, human-mouse, mouse-yeast"
         )
 
 
@@ -2322,4 +2672,185 @@ def _load_gene_map(species_dir: Path) -> dict[str, str]:
         lookup[sys_name.upper()] = sys_name
         if common and common.upper() != "NAN":
             lookup[common.upper()] = sys_name
+    return lookup
+
+
+def _discover_compara_url(species_name: str) -> str | None:
+    """Discover Ensembl Compara homology TSV URL for a species.
+
+    Fetches the directory listing to find the current release filename,
+    avoiding hardcoded release numbers.
+
+    Args:
+        species_name: Ensembl species name (e.g. "mus_musculus")
+
+    Returns:
+        Full URL to the gzipped TSV, or None if not found.
+    """
+    base = f"https://ftp.ensembl.org/pub/current_tsv/ensembl-compara/homologies/{species_name}/"
+    try:
+        resp = requests.get(base, timeout=60)
+        resp.raise_for_status()
+        # Look for filename like Compara.115.protein_default.homologies.tsv.gz
+        match = re.search(
+            r'(Compara\.\d+\.protein_default\.homologies\.tsv\.gz)',
+            resp.text,
+        )
+        if match:
+            return base + match.group(1)
+        logger.warning("Could not find Compara TSV filename in %s", base)
+        return None
+    except Exception as exc:
+        logger.warning("Failed to discover Compara URL for %s: %s", species_name, exc)
+        return None
+
+
+# Ensembl species names for Compara
+_ENSEMBL_SPECIES_NAMES = {
+    "mouse": "mus_musculus",
+    "human": "homo_sapiens",
+    "yeast": "saccharomyces_cerevisiae",
+}
+
+
+def _download_orthologs_compara(
+    ortho_dir: Path,
+    species_base: Path,
+    species1: str,
+    species2: str,
+) -> Path:
+    """Download orthologs from Ensembl Compara FTP bulk TSV.
+
+    Downloads the homologies TSV for species1, filters to one2one orthologs
+    with species2, and maps Ensembl gene IDs to systematic names.
+
+    Args:
+        ortho_dir: Directory to save output TSV.
+        species_base: Base species data directory.
+        species1: Primary species (whose Compara TSV to download).
+        species2: Target species to filter orthologs for.
+
+    Returns:
+        Path to the output ortholog TSV.
+    """
+    pair_key = "_".join(sorted([species1, species2]))
+    out_path = ortho_dir / f"{pair_key}.tsv"
+
+    ens_name1 = _ENSEMBL_SPECIES_NAMES.get(species1)
+    ens_name2 = _ENSEMBL_SPECIES_NAMES.get(species2)
+    if not ens_name1 or not ens_name2:
+        raise ValueError(f"Unknown species for Compara: {species1} or {species2}")
+
+    # Discover the download URL
+    url = _discover_compara_url(ens_name1)
+    if not url:
+        raise RuntimeError(
+            f"Could not discover Ensembl Compara URL for {ens_name1}. "
+            "Check https://ftp.ensembl.org/pub/current_tsv/ensembl-compara/homologies/"
+        )
+
+    logger.info("Downloading Ensembl Compara homologies for %s (this may take a while)...", species1)
+    resp = requests.get(url, timeout=600, stream=True)
+    resp.raise_for_status()
+
+    raw_text = gzip.decompress(resp.content).decode("utf-8", errors="replace")
+    logger.info("Downloaded Compara TSV, filtering for %s-%s orthologs...", species1, species2)
+
+    # Load gene maps for ID resolution
+    map1 = _load_gene_map(species_base / species1) if (species_base / species1).exists() else {}
+    map2 = _load_gene_map(species_base / species2) if (species_base / species2).exists() else {}
+
+    # Also build ensembl_gene_id → systematic_name mapping for both species
+    ensg_to_sys1 = _load_ensembl_to_sys(species_base / species1)
+    ensg_to_sys2 = _load_ensembl_to_sys(species_base / species2)
+
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    lines = raw_text.split("\n")
+    header = lines[0] if lines else ""
+    cols = header.split("\t")
+
+    # Find column indices
+    col_idx: dict[str, int] = {name: i for i, name in enumerate(cols)}
+
+    # Key columns in Compara TSV:
+    # gene_stable_id, homology_type, homolog_species, homolog_gene_stable_id,
+    # is_high_confidence, homolog_gene_stable_id
+    gene_id_col = col_idx.get("gene_stable_id")
+    hom_type_col = col_idx.get("homology_type")
+    hom_species_col = col_idx.get("homolog_species")
+    hom_gene_col = col_idx.get("homolog_gene_stable_id")
+    confidence_col = col_idx.get("is_high_confidence")
+
+    if gene_id_col is None or hom_type_col is None or hom_species_col is None or hom_gene_col is None:
+        logger.warning(
+            "Compara TSV has unexpected columns: %s. "
+            "Expected: gene_stable_id, homology_type, homolog_species, homolog_gene_stable_id",
+            cols[:10],
+        )
+        raise RuntimeError("Unexpected Compara TSV format")
+
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) <= max(gene_id_col, hom_type_col, hom_species_col, hom_gene_col):
+            continue
+
+        hom_type = parts[hom_type_col]
+        if hom_type != "ortholog_one2one":
+            continue
+
+        hom_species = parts[hom_species_col]
+        if hom_species != ens_name2:
+            continue
+
+        # Optionally filter by confidence
+        if confidence_col is not None and len(parts) > confidence_col:
+            conf = parts[confidence_col].strip()
+            # Keep high confidence (1) or if column is empty
+            if conf == "0":
+                continue
+
+        gene1_ens = parts[gene_id_col].strip()
+        gene2_ens = parts[hom_gene_col].strip()
+
+        # Map to systematic names
+        sys1 = ensg_to_sys1.get(gene1_ens, map1.get(gene1_ens.upper(), gene1_ens))
+        sys2 = ensg_to_sys2.get(gene2_ens, map2.get(gene2_ens.upper(), gene2_ens))
+
+        key = (sys1, sys2)
+        if key not in seen:
+            seen.add(key)
+            pairs.append(key)
+
+    logger.info("Found %d one-to-one orthologs between %s and %s", len(pairs), species1, species2)
+
+    # Write output TSV
+    col1_name = f"{species1}_gene"
+    col2_name = f"{species2}_gene"
+    df = pd.DataFrame(pairs, columns=[col1_name, col2_name])
+    df = df.drop_duplicates().sort_values(col1_name).reset_index(drop=True)
+    df.to_csv(out_path, sep="\t", index=False)
+    logger.info("Ortholog mapping: %d %s-%s pairs → %s", len(df), species1, species2, out_path)
+
+    return out_path
+
+
+def _load_ensembl_to_sys(species_dir: Path) -> dict[str, str]:
+    """Load gene_id_map.tsv and return {ensembl_gene_id: systematic_name} lookup.
+
+    For yeast, maps Ensembl gene IDs (if present) to SGD systematic names.
+    For human/mouse, the systematic_name IS the Ensembl gene ID.
+    """
+    path = species_dir / "gene_id_map.tsv"
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, sep="\t")
+    lookup: dict[str, str] = {}
+    for _, row in df.iterrows():
+        sys_name = str(row["systematic_name"]).strip()
+        # The systematic_name for human/mouse IS the Ensembl ID
+        lookup[sys_name] = sys_name
     return lookup
