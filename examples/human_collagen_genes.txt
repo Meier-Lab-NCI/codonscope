@@ -1,0 +1,28 @@
+# Human collagen genes
+# Source: HUGO Gene Nomenclature Committee (HGNC)
+# Collagens have a characteristic Gly-X-Y tripeptide repeat, making them
+# strongly enriched for glycine (~33% of residues vs ~7% genome average).
+# Expected results: strong AA-driven signal in Mode 5 (Gly, Pro enriched),
+# GGC/GGA/GGT codon enrichment in Mode 1, distinctive Mode 3 profile.
+# Count: 21
+COL1A1
+COL1A2
+COL2A1
+COL3A1
+COL4A1
+COL4A2
+COL4A3
+COL4A4
+COL4A5
+COL5A1
+COL5A2
+COL6A1
+COL6A2
+COL6A3
+COL7A1
+COL11A1
+COL11A2
+COL12A1
+COL14A1
+COL17A1
+COL18A1

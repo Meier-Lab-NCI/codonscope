@@ -1394,6 +1394,36 @@ tRNA gene copies: GtRNAdb (genomic tRNA database)
 Human expression: GTEx v8 (Genotype-Tissue Expression project)
 Orthologs: Ensembl Compara (mouse) / curated name matching (yeast)
 
+PILOT GENE LISTS FOR TESTING
+{'-' * 40}
+Use these pre-made gene sets to verify CodonScope and understand the output.
+Example files are in the examples/ directory of the repository.
+
+Yeast RP genes (examples/yeast_rp_genes.txt, 132 genes):
+  Ribosomal proteins — canonical translational selection. Expect strong
+  synonymous-driven codon bias (Mode 5), high optimality with 5' ramp (Mode 3),
+  low FS collision transitions (Mode 4). Best first test.
+
+Yeast Gcn4 targets (examples/yeast_gcn4_targets.txt, 55 genes):
+  Amino acid biosynthesis genes regulated by Gcn4. Expect AA-driven enrichment
+  (Mode 5): glycine and arginine over-represented. Good contrast to RP genes
+  (AA-driven vs synonymous-driven).
+
+Yeast glycolytic enzymes (examples/yeast_glycolytic.txt, 17 genes):
+  Glycolysis and fermentation (HXK1 through ADH1). Highly expressed, codon-
+  optimized. Smaller set, so fewer codons reach significance.
+
+Human RP genes (examples/human_rp_genes.txt, 80 core genes):
+  Same biology as yeast, different preferred codons. Try with --tissue liver
+  vs --tissue brain to see tissue-specific demand differences.
+
+Human collagens (examples/human_collagen_genes.txt, 21 genes):
+  Gly-X-Y repeat proteins. ~33% glycine vs ~7% genome average. Strongest
+  AA-driven signal in Mode 5. Also enriched for proline codons.
+
+Mouse RP genes (examples/mouse_rp_genes.txt, 80 core genes):
+  Same mammalian tRNA pools as human — results parallel human RP analysis.
+
 CITATION
 {'-' * 40}
 CodonScope v{__version__}
