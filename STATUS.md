@@ -1,7 +1,7 @@
 # CodonScope Implementation Status
 
 Last updated: 2026-02-08
-338 tests passing + 6 skipped. 31 commits on main. Version 0.1.0.
+376 tests passing + 6 skipped. 32 commits on main. Version 0.1.0.
 
 ---
 
@@ -62,6 +62,8 @@ cohens_d(geneset_mean, background_mean, background_std) -> np.ndarray
 power_check(n_genes, k) -> list[str]
 diagnostic_ks_tests(geneset_lengths, geneset_gc, bg_lengths, bg_gc) -> dict
 compare_to_background(gene_sequences, background_npz_path, k=1, n_bootstrap=10000, trim_ramp=0, seed=None) -> pd.DataFrame
+binomial_glm_zscores(geneset_sequences, all_sequences, k=1, trim_ramp=0) -> pd.DataFrame  # GC3-corrected logistic model
+_compute_gc3(sequence: str) -> float
 ```
 
 **`codonscope/core/optimality.py`** — tAI and wobble-aware tAI scoring.
@@ -112,7 +114,7 @@ Key internal functions:
 
 ### Analysis Modes
 
-**Mode 1: Composition** — `codonscope/modes/mode1_composition.py`
+**Codon Enrichment Analysis** — `codonscope/modes/mode1_composition.py`
 
 ```python
 run_composition(
@@ -124,18 +126,33 @@ run_composition(
     trim_ramp: int = 0,                  # skip first N codons from 5' end
     min_genes: int = 10,
     n_bootstrap: int = 10_000,
+    model: str = "bootstrap",           # "bootstrap" or "binomial" (GC3-corrected GLM)
     output_dir: str | Path | None = None,
     seed: int | None = None,
     data_dir: str | Path | None = None,
 ) -> dict
 # Returns: results (DataFrame), diagnostics (dict), id_summary (IDMapping), n_genes (int)
 # DataFrame columns: kmer, observed_freq, expected_freq, z_score, p_value, adjusted_p, cohens_d
+# Binomial GLM adds: gc3_beta, gc3_pvalue columns; model key in result dict
 # K-mers annotated with amino acids (e.g., "AAG (Lys)")
 ```
 
-Features: mono/di/tricodon analysis, matched (length+GC) background, KS diagnostics, ramp trimming, amino acid annotations on k-mers, volcano + bar chart plots, gene name display.
+Features: mono/di/tricodon analysis, matched (length+GC) background, KS diagnostics, ramp trimming, amino acid annotations on k-mers, volcano + bar chart plots, gene name display. Optional binomial GLM with GC3 correction (`--model binomial`).
 
-**Mode 2: Translational Demand** — `codonscope/modes/mode2_demand.py`
+**CAI (Codon Adaptation Index)** — `codonscope/core/cai.py`
+
+```python
+compute_reference_weights(species: str, data_dir=None, top_fraction=0.05) -> dict[str, float]
+compute_cai(gene_sequences: dict[str, str], weights: dict[str, float]) -> dict[str, float]
+cai_analysis(species: str, gene_ids: list[str], data_dir=None) -> dict
+# Returns: per_gene (DataFrame), geneset_mean, geneset_median, genome_per_gene (DataFrame),
+#          genome_mean, genome_median, percentile_rank, mann_whitney_u, mann_whitney_p,
+#          reference_n_genes, weights
+```
+
+Features: reference weights from top 5% expressed genes, per-gene CAI scoring (geometric mean), genome-wide comparison via Mann-Whitney U test, percentile rank in genome distribution. Integrated into report gene summary section.
+
+**Translational Demand Analysis** — `codonscope/modes/mode2_demand.py`
 
 ```python
 run_demand(
@@ -156,7 +173,7 @@ run_demand(
 
 Features: expression-weighted codon demand, GTEx tissue-specific (human), CCLE cell line expression (human, e.g. HEK293T, HeLa, K562), custom expression file support, weighted bootstrap Z-scores, amino acid annotations, top demand-contributing genes.
 
-**Mode 3: Optimality Profile** — `codonscope/modes/mode3_profile.py`
+**Translational Optimality Profile** — `codonscope/modes/mode3_profile.py`
 
 ```python
 run_profile(
@@ -177,7 +194,7 @@ run_profile(
 
 Features: per-position tAI/wtAI scoring, sliding window smoothing, normalised to 100 positional bins, ramp analysis (first N codons vs body), ramp codon composition breakdown, metagene line + ramp bar chart plots.
 
-**Mode 4: Collision Potential** — `codonscope/modes/mode4_collision.py`
+**Collision Potential Analysis** — `codonscope/modes/mode4_collision.py`
 
 ```python
 run_collision(
@@ -198,7 +215,7 @@ run_collision(
 
 Features: FF/FS/SF/SS dicodon transition counting, FS enrichment ratio, per-dicodon FS enrichment analysis (`fs_dicodons` DataFrame), per-gene FS fractions, positional FS clustering, chi-squared test vs genome, transition bars + positional FS plots.
 
-**Mode 5: AA vs Codon Disentanglement** — `codonscope/modes/mode5_disentangle.py`
+**AA vs Synonymous Attribution** — `codonscope/modes/mode5_disentangle.py`
 
 ```python
 run_disentangle(
@@ -216,7 +233,7 @@ run_disentangle(
 
 Features: two-layer decomposition (AA composition + RSCU), per-codon attribution, synonymous driver classification (tRNA supply, GC3 bias, wobble avoidance), two-panel plot.
 
-**Mode 6: Cross-Species Comparison** — `codonscope/modes/mode6_compare.py`
+**Cross-Species Comparison** — `codonscope/modes/mode6_compare.py`
 
 ```python
 run_compare(
@@ -251,26 +268,29 @@ generate_report(
 ) -> Path
 ```
 
-Self-contained HTML with inline CSS and base64-embedded matplotlib plots. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6). Includes gene summary with ID mapping table, volcano plots, attribution table, metagene profile, collision bars, demand analysis, cross-species correlation (if species2 provided). Exports `{stem}_results.zip` containing HTML report, data/*.tsv files, and README.txt documenting analysis parameters, input gene list, output file descriptions, and reference data sources.
+Self-contained HTML with inline CSS and base64-embedded matplotlib plots. Descriptive section names (no "Mode N:" prefixes). Two section groups: "Sequence-Level Analysis" (Codon Enrichment, Region-Specific Enrichment, Dicodon Enrichment, AA vs Synonymous Attribution) and "Translation-Level Analysis" (Translational Optimality Profile, Collision Potential, Translational Demand, Cross-Species Comparison). Gene summary includes CAI box plot + histogram. Waterfall bar charts for all 61 codons (C-ending in red). Region-specific enrichment (ramp codons 2-50 vs body 51+). Collision dicodon waterfall colored by FF/FS/SF/SS type. Exports `{stem}_results.zip` containing HTML report, data/*.tsv files, and README.txt.
 
 ### CLI
 
-**`codonscope/cli.py`** — 8 subcommands.
+**`codonscope/cli.py`** — 9 subcommands (with backward-compatible aliases).
 
 ```
-codonscope download     --species SPECIES [SPECIES ...] [--data-dir DIR]
-codonscope report       --species S --genes FILE [--species2 S] [--tissue T] [--cell-line C] [--output FILE] [--n-bootstrap N] [--seed N] [--data-dir DIR]
-codonscope composition  --species S --genes FILE [--kmer {1,2,3}] [--background {all,matched}] [--trim-ramp N] [--min-genes N] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
-codonscope demand       --species S --genes FILE [--tissue T] [--cell-line C] [--expression-file FILE] [--top-n N] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
-codonscope profile      --species S --genes FILE [--window N] [--wobble-penalty P] [--ramp-codons N] [--method {tai,wtai}] [--output-dir DIR] [--data-dir DIR]
-codonscope collision    --species S --genes FILE [--wobble-penalty P] [--threshold T] [--method {tai,wtai}] [--output-dir DIR] [--data-dir DIR]
-codonscope disentangle  --species S --genes FILE [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
-codonscope compare      --species1 S --species2 S --genes FILE [--from-species S] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
+codonscope download      --species SPECIES [SPECIES ...] [--data-dir DIR]
+codonscope report        --species S --genes FILE [--species2 S] [--tissue T] [--cell-line C] [--output FILE] [--n-bootstrap N] [--seed N] [--model {bootstrap,binomial}] [--data-dir DIR]
+codonscope enrichment    --species S --genes FILE [--kmer {1,2,3}] [--background {all,matched}] [--trim-ramp N] [--min-genes N] [--n-bootstrap N] [--model {bootstrap,binomial}] [--output-dir DIR] [--seed N] [--data-dir DIR]
+codonscope demand        --species S --genes FILE [--tissue T] [--cell-line C] [--expression-file FILE] [--top-n N] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
+codonscope optimality    --species S --genes FILE [--window N] [--wobble-penalty P] [--ramp-codons N] [--method {tai,wtai}] [--output-dir DIR] [--data-dir DIR]
+codonscope collision     --species S --genes FILE [--wobble-penalty P] [--threshold T] [--method {tai,wtai}] [--output-dir DIR] [--data-dir DIR]
+codonscope attribution   --species S --genes FILE [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
+codonscope cai           --species S --genes FILE [--output-dir DIR] [--data-dir DIR]
+codonscope compare       --species1 S --species2 S --genes FILE [--from-species S] [--n-bootstrap N] [--output-dir DIR] [--seed N] [--data-dir DIR]
 ```
+
+Aliases: `composition` → `enrichment`, `profile` → `optimality`, `disentangle` → `attribution`.
 
 Gene list files support: one ID per line, comma-separated, tab-separated, `#` comments.
 
-### Tests (338 passing, 6 skipped)
+### Tests (376 passing, 6 skipped)
 
 | File | Count | What it covers |
 |------|-------|----------------|
@@ -283,9 +303,11 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 | `tests/test_mode4.py` | 22 | Transition counting (FF/FS/SF/SS), proportions, FS enrichment, chi-squared, yeast RP integration, Gcn4 comparison, CLI |
 | `tests/test_mode2.py` | 36 | Demand vectors, expression loading (yeast + human GTEx), weighted bootstrap, yeast RP demand, Gcn4 demand, human liver demand, CLI |
 | `tests/test_mode6.py` | 36 | OrthologDB unit tests, RSCU correlation, ortholog download, RP comparison (yeast→human + human→yeast), divergent analysis, CLI |
-| `tests/test_report.py` | 18 | HTML report generation (RP + Gcn4), all mode sections, base64 images, gene summary, cross-species report, CLI |
+| `tests/test_report.py` | 18 | HTML report generation (RP + Gcn4), all mode sections, base64 images, gene summary with CAI, cross-species report, CLI |
 | `tests/test_id_resolution.py` | 75 (69+6skip) | GtRNAdb parser (3 formats), ID regex patterns, auto-detection, backward-compat resolution, new ID types (RefSeq, SGD, UniProt, MGI, Entrez), mixed ID lists, download function imports, ortholog dispatcher, parse unit tests, IDMapping compat |
-| **Total** | **338 + 6 skip** | |
+| `tests/test_cai.py` | 22 | Reference weights (range, max per family), compute_cai (range, empty, Met-only, optimal), yeast RP integration (high CAI, Mann-Whitney, percentile), human RP, edge cases |
+| `tests/test_glm.py` | 16 | _compute_gc3 unit tests, binomial GLM structure (raises k>1, correct columns), GLM vs bootstrap correlation, run_composition binomial integration |
+| **Total** | **376 + 6 skip** | |
 
 6 tests skipped: UniProt, MGI, SGD ID, and Entrez lookups need data re-download to populate new mapping files.
 
@@ -374,6 +396,20 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 - Quick-start lists remain in `examples/`: yeast/human/mouse RP genes + yeast_trm_genes
 - **Colab pilot set dropdown** — `PILOT_SET` selector auto-fills preset gene lists plus "Custom" option
 - **Zip README.txt** — every exported zip includes pilot gene list reference
+
+### Chunk 14: CAI + Binomial GLM
+- **CAI (Codon Adaptation Index):** `core/cai.py` implements Sharp & Li 1987 CAI. Reference weights from top 5% expressed genes. Per-gene CAI as geometric mean of codon weights (skips Met/Trp). Genome-wide comparison via Mann-Whitney U test and percentile rank. Integrated into report gene summary section with box plot + histogram.
+- **Binomial GLM:** `binomial_glm_zscores()` in `statistics.py`. GC3-corrected logistic model per codon: `logit(p) = β₀ + β₁·gene_set + β₂·GC3`. Uses statsmodels GLM with Binomial family. Only k=1 (raises ValueError for k>1). Returns 59 codons (61 - Met - Trp) with gc3_beta, gc3_pvalue columns.
+- **CLI `--model` flag:** `--model binomial` on `enrichment` and `report` subcommands selects GLM instead of bootstrap.
+- **statsmodels dependency** added to pyproject.toml.
+
+### Chunk 15: Descriptive Mode Names, Waterfall Charts, Region Enrichment
+- **Descriptive mode names:** All "Mode N:" references replaced with descriptive analysis names throughout report.py, cli.py, Colab notebook, CLAUDE.md, STATUS.md.
+- **CLI subcommand aliases:** `enrichment` (was `composition`), `optimality` (was `profile`), `attribution` (was `disentangle`). New `cai` subcommand. Old names still work as aliases.
+- **Report section groups:** "Sequence-Level Analysis" and "Translation-Level Analysis" group headers with CSS `.group-header` class.
+- **Waterfall bar charts:** `_plot_waterfall()` — all 61 codons ranked by Z-score, C-ending in red, significance lines at Z=±1.96. `_plot_waterfall_dicodon()` — top 30 + bottom 30 dicodons. `_plot_collision_waterfall()` — top 40 + bottom 40 dicodon transitions colored by FF (blue), FS (red), SF (orange), SS (gray).
+- **Region-specific enrichment:** `_run_region_enrichment()` splits CDS into ramp (codons 2-50) and body (51+), runs monocodon enrichment separately on each region with on-the-fly background computation. `_section_region_enrichment()` renders comparison table of positionally biased codons (different Z-score direction, delta > 2.0).
+- **Colab notebook:** all cell titles + markdown updated to descriptive analysis names.
 
 ### Earlier Feature Additions (Chunks 7-9)
 - **CCLE cell line expression:** `download_ccle_expression()` downloads DepMap data. `--cell-line` CLI flag (e.g., HEK293T, HeLa, K562). Human only.
