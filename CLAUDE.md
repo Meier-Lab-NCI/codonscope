@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**475 tests passing (+ 6 skipped pending re-download). 40 commits on main.**
+**475 tests passing (+ 6 skipped pending re-download). 50 commits on main.**
 
 ### Build progress
 
@@ -31,6 +31,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 15 | Descriptive mode names, waterfall charts, region enrichment | ✅ Done |
 | 16 | Numbered report sections, wobble coloring, dicodon region enrichment | ✅ Done |
 | 17 | v0.2: Report restructure, reverse mode, deep-dive, differential | ✅ Done |
+| 18 | Colab notebook UX: bug fixes, performance, Tier 1/2/3 navigation, downloads | ✅ Done |
 
 ### What exists (files and what they do)
 
@@ -62,6 +63,9 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 **CLI:**
 - `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `enrichment` (alias: `composition`), `demand`, `optimality` (alias: `profile`), `collision`, `attribution` (alias: `disentangle`), `compare`, `cai`, `reverse`, `deep-dive` (with --positional, --cluster, --cluster-codons, --cluster-top, --window, --permutations, --seed), `differential`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
+
+**Scripts:**
+- `scripts/counts_to_tpm.py` — Standalone script to convert raw RNA-seq counts to TPM for CodonScope. Auto-detects featureCounts/HTSeq/generic matrix formats. Can pull CDS lengths from CodonScope data via `--species`. See `scripts/README.md`.
 
 **Tests (475 passing, 6 skipped):**
 - `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds

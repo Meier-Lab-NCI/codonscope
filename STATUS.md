@@ -1,7 +1,7 @@
 # CodonScope Implementation Status
 
 Last updated: 2026-02-09
-475 tests passing + 6 skipped. 40 commits on main. Version 0.2.0.
+475 tests passing + 6 skipped. 50 commits on main. Version 0.2.0.
 
 ---
 
@@ -460,7 +460,34 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 - `_synonymous_shuffle()` permutation test: shuffles codons within AA families, preserving amino acid sequence exactly. Empirical p-values per gene.
 - CLI: `codonscope deep-dive --results-dir data/ --cluster --cluster-codons AGA AAG --permutations 1000`
 
-**Colab notebook updated** with Section 6 (Tier 2 Standalone Tools): reverse mode, driver analysis, positional enrichment, cluster scanning, differential comparison cells.
+**Colab notebook updated** with Tier 3 Standalone Tools: reverse mode, driver analysis, positional enrichment, cluster scanning, differential comparison cells.
+
+### Chunk 18: Colab Notebook UX — Bug Fixes, Performance, Navigation, Downloads
+
+**Bug fixes:**
+- Fixed KeyError in driver analysis cell: `n_significant` → `len(driver_result["significant_codons"])`, `drivers` → `driver_tables`.
+- Fixed KeyError in cluster scanning cell: `summary['target_codons']` → `cluster_result["target_codons"]` (top-level key, not nested in summary).
+- Fixed TypeError in differential analysis cell: `generate_differential_report()` takes raw arguments (`species`, `gene_ids_a`, `gene_ids_b`), not a pre-computed result dict.
+- Fixed reverse mode hanging on human (19K genes): replaced Python for-loop building DataFrame one dict at a time with vectorized numpy — filter with `np.argsort` first, build DataFrame only for kept genes. Performance: hanging → 4 seconds.
+
+**UX improvements:**
+- Added `UPLOAD_CUSTOM_EXPRESSION` boolean param to Translational Demand cell — triggers `google.colab.files.upload()` for a file browser button.
+- Moved custom expression documentation from gene list entry cell to Translational Demand cell (where the upload actually happens).
+- Added `CODONS_OF_INTEREST` parameter to driver analysis — comma-separated codons (e.g. "AGA,TTA,GCT") to see detailed driver tables for specific codons of interest.
+- Added `FALLBACK_TOP_N` parameter — when no codons reach significance, falls back to top N by |Z-score| with explanatory message.
+- All Tier 3 result tables now use scrollable HTML divs (`max-height:500px; overflow-y:auto`) instead of truncated pandas display.
+
+**Navigation restructure:**
+- Notebook reorganized into semantic tiers: **Install CodonScope** (Steps 1-4), **Tier 1: Full Report**, **Tier 2: Explore Individual Analysis Results**, **Tier 3: Standalone Tools**.
+- Removed all confusing "Section N" cross-references (replaced with "Tier 1 Full Report", "Step 3", etc.).
+- Updated intro cell with overview table of all tiers and their analyses.
+
+**Download cells:**
+- **Tier 3 download cell** added: collects all Tier 3 analysis results run in the session into a downloadable zip. Includes complete TSV tables (all rows, not just what was displayed) for custom plotting in R/Excel/etc.
+- Files included per analysis: `reverse_results.tsv`, `driver_summary.tsv` + `driver_genes_{CODON}.tsv` (one per codon, all genes), `positional_zscores.tsv` + `positional_significant.tsv`, `cluster_per_gene.tsv`, `differential_results.tsv` + `differential_report.html`.
+
+**Scripts:**
+- `scripts/counts_to_tpm.py` — standalone script to convert raw RNA-seq counts to TPM. Auto-detects featureCounts/HTSeq/generic formats. Can pull CDS lengths from CodonScope data via `--species`. Handles gene ID matching (case-insensitive symbols, Ensembl, Entrez). Filters low-count genes. See `scripts/README.md`.
 
 ### Earlier Feature Additions (Chunks 7-9)
 - **CCLE cell line expression:** `download_ccle_expression()` downloads DepMap data. `--cell-line` CLI flag (e.g., HEK293T, HeLa, K562). Human only.
