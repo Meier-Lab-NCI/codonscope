@@ -91,12 +91,12 @@ class TestReportGeneration:
             )
             content = output.read_text()
             assert "Gene List Summary" in content
-            assert "Codon Enrichment Analysis" in content
-            assert "Dicodon Enrichment Analysis" in content
-            assert "AA vs Synonymous Attribution" in content
-            assert "Translational Optimality Profile" in content
-            assert "Collision Potential Analysis" in content
-            assert "Translational Demand Analysis" in content
+            assert "1. Codon Enrichment Analysis" in content
+            assert "2. Dicodon Enrichment Analysis" in content
+            assert "3. AA vs Synonymous Attribution" in content
+            assert "4. Weighted tRNA Adaptation Index" in content
+            assert "5. Collision Potential Analysis" in content
+            assert "6. Translational Demand Analysis" in content
 
     def test_report_has_embedded_images(self):
         from codonscope.report import generate_report
@@ -113,8 +113,9 @@ class TestReportGeneration:
             content = output.read_text()
             # Should have base64 PNG images
             assert "data:image/png;base64," in content
-            # At least 5 plots (volcano x2, pie, metagene, transitions, demand)
-            assert content.count("data:image/png;base64,") >= 5
+            # At least 8 plots (CAI, volcano+3 waterfalls, dicodon volcano,
+            # pie, metagene, transitions, demand)
+            assert content.count("data:image/png;base64,") >= 8
 
     def test_report_gene_summary_section(self):
         from codonscope.report import generate_report

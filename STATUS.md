@@ -268,7 +268,7 @@ generate_report(
 ) -> Path
 ```
 
-Self-contained HTML with inline CSS and base64-embedded matplotlib plots. Descriptive section names (no "Mode N:" prefixes). Two section groups: "Sequence-Level Analysis" (Codon Enrichment, Region-Specific Enrichment, Dicodon Enrichment, AA vs Synonymous Attribution) and "Translation-Level Analysis" (Translational Optimality Profile, Collision Potential, Translational Demand, Cross-Species Comparison). Gene summary includes CAI box plot + histogram. Waterfall bar charts for all 61 codons (C-ending in red). Region-specific enrichment (ramp codons 2-50 vs body 51+). Collision dicodon waterfall colored by FF/FS/SF/SS type. Exports `{stem}_results.zip` containing HTML report, data/*.tsv files, and README.txt.
+Self-contained HTML with inline CSS and base64-embedded matplotlib plots. Numbered sections: 1. Codon Enrichment (default + matched + binomial + ramp + body, 3 waterfall charts colored by wobble decoding), 2. Dicodon Enrichment (default + matched + ramp + body, no waterfall), 3. AA vs Synonymous Attribution, 4. Weighted tRNA Adaptation Index, 5. Collision Potential Analysis, 6. Translational Demand Analysis, Cross-Species Comparison (unnumbered, optional). Gene summary includes CAI box plot + histogram. Waterfall bar charts use wobble-decoded (amber) vs Watson-Crick (gray) coloring. Collision dicodon waterfall colored by FF/FS/SF/SS type. Exports `{stem}_results.zip` containing HTML report, data/*.tsv files, and README.txt.
 
 ### CLI
 
@@ -406,9 +406,15 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 ### Chunk 15: Descriptive Mode Names, Waterfall Charts, Region Enrichment
 - **Descriptive mode names:** All "Mode N:" references replaced with descriptive analysis names throughout report.py, cli.py, Colab notebook, CLAUDE.md, STATUS.md.
 - **CLI subcommand aliases:** `enrichment` (was `composition`), `optimality` (was `profile`), `attribution` (was `disentangle`). New `cai` subcommand. Old names still work as aliases.
-- **Report section groups:** "Sequence-Level Analysis" and "Translation-Level Analysis" group headers with CSS `.group-header` class.
-- **Waterfall bar charts:** `_plot_waterfall()` — all 61 codons ranked by Z-score, C-ending in red, significance lines at Z=±1.96. `_plot_waterfall_dicodon()` — top 30 + bottom 30 dicodons. `_plot_collision_waterfall()` — top 40 + bottom 40 dicodon transitions colored by FF (blue), FS (red), SF (orange), SS (gray).
-- **Region-specific enrichment:** `_run_region_enrichment()` splits CDS into ramp (codons 2-50) and body (51+), runs monocodon enrichment separately on each region with on-the-fly background computation. `_section_region_enrichment()` renders comparison table of positionally biased codons (different Z-score direction, delta > 2.0).
+- **Waterfall bar charts:** `_plot_waterfall()` — all 61 codons ranked by Z-score, wobble-decoded in amber, Watson-Crick in gray, significance lines at Z=±1.96. `_plot_waterfall_dicodon()` — top 30 + bottom 30 dicodons. `_plot_collision_waterfall()` — top 40 + bottom 40 dicodon transitions colored by FF (blue), FS (red), SF (orange), SS (gray).
+- **Region-specific enrichment:** `_run_region_enrichment()` splits CDS into ramp (codons 2-50) and body (51+), runs enrichment separately on each region with on-the-fly background computation. Supports k=1 (monocodon) and k=2 (dicodon).
+
+### Chunk 16: Numbered Report Sections
+- **Report restructured into numbered sections:** 1. Codon Enrichment (consolidated: default + matched + binomial + ramp + body + positionally biased codons), 2. Dicodon Enrichment (default + matched + ramp + body), 3. AA vs Synonymous Attribution, 4. Weighted tRNA Adaptation Index (renamed from Translational Optimality Profile), 5. Collision Potential Analysis, 6. Translational Demand Analysis, Cross-Species Comparison (unnumbered, optional).
+- **Always run matched background** for both mono and dicodon (no longer conditional on bias detection).
+- **Waterfall coloring changed** from C-ending (red) to wobble-decoded (amber) vs Watson-Crick (gray).
+- **Dicodon region enrichment** added (ramp + body for k=2).
+- **Group headers removed** ("Sequence-Level Analysis" / "Translation-Level Analysis" replaced by numbered sections).
 - **Colab notebook:** all cell titles + markdown updated to descriptive analysis names.
 
 ### Earlier Feature Additions (Chunks 7-9)
