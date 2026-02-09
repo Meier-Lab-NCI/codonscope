@@ -84,46 +84,42 @@ def run_reverse(
     sum_freq = target_freq.sum(axis=1)
     mean_freq = target_freq.mean(axis=1)
 
-    # Build results table
-    records = []
-    for i, gene in enumerate(gene_names):
-        record = {
-            "gene": gene,
-            "combined_z": combined_z[i],
-            "min_z": min_z[i],
-            "max_z": max_z[i],
-            "sum_freq": sum_freq[i],
-            "mean_freq": mean_freq[i],
-        }
-        # Add per-codon Z-scores
-        for j, codon in enumerate(codons_upper):
-            record[f"z_{codon}"] = target_z[i, j]
-        records.append(record)
+    # Sort by combined_z descending and apply filters early (before DataFrame)
+    sorted_idx = np.argsort(-combined_z)
 
-    df = pd.DataFrame(records)
+    if top is not None:
+        # Only need top N — much faster than building full DataFrame
+        keep_idx = sorted_idx[:top]
+    elif zscore_cutoff is not None:
+        keep_idx = sorted_idx[combined_z[sorted_idx] >= zscore_cutoff]
+    elif percentile is not None:
+        threshold = np.percentile(combined_z, percentile)
+        keep_idx = sorted_idx[combined_z[sorted_idx] >= threshold]
+    else:
+        # Default: Z >= 2.0
+        keep_idx = sorted_idx[combined_z[sorted_idx] >= 2.0]
+
+    # Build DataFrame only for kept genes (vectorized)
+    kept_genes = [gene_names[i] for i in keep_idx]
+    data = {
+        "gene": kept_genes,
+        "combined_z": combined_z[keep_idx],
+        "min_z": min_z[keep_idx],
+        "max_z": max_z[keep_idx],
+        "sum_freq": sum_freq[keep_idx],
+        "mean_freq": mean_freq[keep_idx],
+    }
+    for j, codon in enumerate(codons_upper):
+        data[f"z_{codon}"] = target_z[keep_idx, j]
+
+    df = pd.DataFrame(data).reset_index(drop=True)
 
     # Add common names
-    common_names = db.get_common_names(gene_names)
+    common_names = db.get_common_names(kept_genes)
     df["gene_name"] = df["gene"].map(lambda g: common_names.get(g, g))
 
     # Add amino acid info for target codons
     aa_info = ", ".join(f"{c} ({CODON_TABLE.get(c, '?')})" for c in codons_upper)
-
-    # Sort by combined_z descending
-    df = df.sort_values("combined_z", ascending=False).reset_index(drop=True)
-
-    # Apply filters
-    if zscore_cutoff is not None:
-        df = df[df["combined_z"] >= zscore_cutoff].reset_index(drop=True)
-    elif percentile is not None:
-        threshold = np.percentile(combined_z, percentile)
-        df = df[df["combined_z"] >= threshold].reset_index(drop=True)
-    elif top is None:
-        # Default: Z >= 2.0
-        df = df[df["combined_z"] >= 2.0].reset_index(drop=True)
-
-    if top is not None:
-        df = df.head(top).reset_index(drop=True)
 
     # Output
     if output_dir:
