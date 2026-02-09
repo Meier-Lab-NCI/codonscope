@@ -1,13 +1,13 @@
 # CodonScope Implementation Status
 
-Last updated: 2026-02-08
-376 tests passing + 6 skipped. 38 commits on main. Version 0.1.0.
+Last updated: 2026-02-09
+475 tests passing + 6 skipped. 40 commits on main. Version 0.2.0.
 
 ---
 
 ## 1. What's Implemented and Tested
 
-All 6 analysis modes, 3 species, HTML report, and full CLI are complete.
+All 6 analysis modes, 3 species, HTML report, full CLI, and v0.2 Tier 2 tools are complete.
 
 ### Core Engine
 
@@ -290,7 +290,7 @@ Aliases: `composition` → `enrichment`, `profile` → `optimality`, `disentangl
 
 Gene list files support: one ID per line, comma-separated, tab-separated, `#` comments.
 
-### Tests (376 passing, 6 skipped)
+### Tests (475 passing, 6 skipped)
 
 | File | Count | What it covers |
 |------|-------|----------------|
@@ -307,7 +307,11 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 | `tests/test_id_resolution.py` | 75 (69+6skip) | GtRNAdb parser (3 formats), ID regex patterns, auto-detection, backward-compat resolution, new ID types (RefSeq, SGD, UniProt, MGI, Entrez), mixed ID lists, download function imports, ortholog dispatcher, parse unit tests, IDMapping compat |
 | `tests/test_cai.py` | 22 | Reference weights (range, max per family), compute_cai (range, empty, Met-only, optimal), yeast RP integration (high CAI, Mann-Whitney, percentile), human RP, edge cases |
 | `tests/test_glm.py` | 16 | _compute_gc3 unit tests, binomial GLM structure (raises k>1, correct columns), GLM vs bootstrap correlation, run_composition binomial integration |
-| **Total** | **376 + 6 skip** | |
+| `tests/test_report_restructure.py` | 21 | Executive summary, collapsible sections, data export (TSV/JSON), expand/collapse controls, CSS |
+| `tests/test_reverse.py` | 16 | Single/multi codon reverse lookup, Z-score filtering, top-N/percentile, biological validation (RP genes, YEF3) |
+| `tests/test_deep_dive.py` | 47 | Driver gene analysis (Gini, N50, jackknife), positional enrichment (100-bin metagene, chunked background), cluster scanning (synonymous shuffle, permutation p-values) |
+| `tests/test_differential.py` | 15 | Mann-Whitney U, fold change, rank-biserial r, BH correction, RP vs Gcn4 biological validation, attribution comparison |
+| **Total** | **475 + 6 skip** | |
 
 6 tests skipped: UniProt, MGI, SGD ID, and Entrez lookups need data re-download to populate new mapping files.
 
@@ -416,6 +420,47 @@ Gene list files support: one ID per line, comma-separated, tab-separated, `#` co
 - **Dicodon region enrichment** added (ramp + body for k=2).
 - **Group headers removed** ("Sequence-Level Analysis" / "Translation-Level Analysis" replaced by numbered sections).
 - **Colab notebook:** all cell titles + markdown updated to descriptive analysis names.
+
+### Chunk 17: v0.2 — Report Restructure, Reverse Mode, Deep-Dive, Differential (99 new tests)
+
+**Feature 1: Report Restructure** (21 tests in `test_report_restructure.py`)
+- **Executive summary** at top of report: top 5 enriched/depleted codons, CAI, attribution breakdown, collision FS ratio, waterfall chart.
+- **Collapsible sections:** each analysis wrapped in `<details>/<summary>` with one-line metric previews. Expand All / Collapse All buttons.
+- **Data export:** `per_gene_codon_freq.tsv` (genes × 61 codons), `gene_metadata.tsv`, `analysis_config.json` written to `{stem}_data/` directory.
+
+**Feature 2: Reverse Mode** (16 tests in `test_reverse.py`)
+- `codonscope/modes/reverse.py` — `run_reverse()` scans all genome genes for target codon enrichment.
+- Per-gene Z-scores: `(gene_freq - genome_mean) / genome_std` for each target codon.
+- Multi-codon combined Z (mean across targets). Filters: `--top N`, `--zscore-cutoff`, `--percentile`.
+- Optional `--check` runs enrichment analysis on result gene list.
+- CLI: `codonscope reverse --species yeast --codons AGA --top 50`
+
+**Feature 3: Driver Gene Identification** (20 tests in `test_deep_dive.py`)
+- `codonscope/modes/deep_dive.py` — `load_tier1_data()` reads Tier 1 report output.
+- `run_driver_analysis()`: for each significant codon (adj_p < threshold), computes per-gene contribution, cumulative contribution curve (N50/N80), Gini coefficient, jackknife leave-one-out influence.
+- `generate_deep_dive_report()` HTML with collapsible per-codon sections, cumulative curve plots, driver tables.
+- CLI: `codonscope deep-dive --results-dir report_data/ --output deep_dive.html`
+
+**Feature 4: Two-List Differential** (15 tests in `test_differential.py`)
+- `codonscope/modes/differential.py` — `run_differential()` compares codon usage between two gene lists.
+- Mann-Whitney U test per codon, rank-biserial r effect size (`1 - 2U/(n_a * n_b)`), fold change, BH correction.
+- Z-scores vs genome for both lists. Optional attribution comparison via `run_disentangle()`.
+- `generate_differential_report()` HTML with waterfall chart + scatter plot.
+- CLI: `codonscope differential --list-a rp.txt --list-b gcn4.txt --species yeast --labels "RP" "Gcn4"`
+
+**Feature 5: Positional Enrichment Heatmap** (11 tests in `test_deep_dive.py`)
+- `run_positional_enrichment()` normalizes each CDS to 100 bins, computes Z-scores per bin per codon.
+- Memory-efficient: chunked two-pass genome background (avoids full `(N_genome, 100, 61)` array).
+- Identifies top 5 enriched + depleted codons. Outputs `positional_z_matrix.tsv`.
+- CLI: `codonscope deep-dive --results-dir data/ --positional`
+
+**Feature 6: Codon Cluster Scanning** (16 tests in `test_deep_dive.py`)
+- `run_cluster_scan()` detects runs of target codons in gene sequences.
+- Auto-selects top N enriched codons if not specified. Sliding window density detection.
+- `_synonymous_shuffle()` permutation test: shuffles codons within AA families, preserving amino acid sequence exactly. Empirical p-values per gene.
+- CLI: `codonscope deep-dive --results-dir data/ --cluster --cluster-codons AGA AAG --permutations 1000`
+
+**Colab notebook updated** with Section 6 (Tier 2 Standalone Tools): reverse mode, driver analysis, positional enrichment, cluster scanning, differential comparison cells.
 
 ### Earlier Feature Additions (Chunks 7-9)
 - **CCLE cell line expression:** `download_ccle_expression()` downloads DepMap data. `--cell-line` CLI flag (e.g., HEK293T, HeLa, K562). Human only.

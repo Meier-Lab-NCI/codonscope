@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**376 tests passing (+ 6 skipped pending re-download). 38 commits on main.**
+**475 tests passing (+ 6 skipped pending re-download). 40 commits on main.**
 
 ### Build progress
 
@@ -30,6 +30,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 14 | CAI + binomial GLM alternative for Mode 1 | ✅ Done |
 | 15 | Descriptive mode names, waterfall charts, region enrichment | ✅ Done |
 | 16 | Numbered report sections, wobble coloring, dicodon region enrichment | ✅ Done |
+| 17 | v0.2: Report restructure, reverse mode, deep-dive, differential | ✅ Done |
 
 ### What exists (files and what they do)
 
@@ -52,14 +53,17 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/modes/mode2_demand.py` — `run_demand()` translational demand analysis. Weights codon frequencies by TPM × n_codons. Weighted bootstrap Z-scores. Reports top demand-contributing genes. Supports yeast (rich-media expression) and human (GTEx tissue-specific). Options: --tissue, --expression (custom), --top-n.
 - `codonscope/modes/mode5_disentangle.py` — `run_disentangle()` with two-layer decomposition (AA composition + RSCU), attribution (AA-driven / synonymous-driven / both), synonymous driver classification (tRNA supply, GC3 bias, wobble avoidance), two-panel plot.
 - `codonscope/modes/mode6_compare.py` — `run_compare()` cross-species comparison. Per-gene RSCU correlation between ortholog pairs. Gene-set vs genome-wide correlation distribution. Bootstrap Z-test + Mann-Whitney U. Divergent gene analysis (different preferred codons tracking tRNA pool differences). Scatter data per amino acid. Two-panel plot (correlation histogram + ranked bar chart).
+- `codonscope/modes/reverse.py` — `run_reverse()` find genes enriched for specific codons. Per-gene Z-scores for target codons vs genome. Supports multi-codon queries, top-N/percentile/Z-cutoff filtering. Optional `--check` runs enrichment on result.
+- `codonscope/modes/deep_dive.py` — `load_tier1_data()`, `run_driver_analysis()` (Gini, N50/N80, jackknife), `run_positional_enrichment()` (100-bin metagene Z-scores with chunked genome background), `run_cluster_scan()` (sliding window + synonymous shuffle permutation test), `generate_deep_dive_report()` HTML output.
+- `codonscope/modes/differential.py` — `run_differential()` two-list comparison. Mann-Whitney U per codon, rank-biserial r effect size, fold change, BH correction. `generate_differential_report()` HTML with waterfall + scatter plots.
 
 **Report:**
-- `codonscope/report.py` — `generate_report()` HTML report generator. Numbered sections: 1. Codon Enrichment (default + matched + binomial + ramp + body, with 3 waterfall charts colored by wobble decoding), 2. Dicodon Enrichment (default + matched + ramp + body, no waterfall), 3. AA vs Synonymous Attribution, 4. Weighted tRNA Adaptation Index, 5. Collision Potential Analysis, 6. Translational Demand Analysis, Cross-Species Comparison (unnumbered, optional). Gene summary with CAI box plot + histogram at top. Collision potential ranked dicodon bar chart (colored by FF/FS/SF/SS). Exports `{stem}_results.zip` with HTML, data/*.tsv, README.txt.
+- `codonscope/report.py` — `generate_report()` HTML report generator. Executive summary with top enriched/depleted codons, CAI, attribution, collision metrics, waterfall chart. Collapsible `<details>/<summary>` sections with metric previews, Expand/Collapse All controls. Numbered sections: 1. Codon Enrichment, 2. Dicodon Enrichment, 3. AA vs Synonymous Attribution, 4. Weighted tRNA Adaptation Index, 5. Collision Potential Analysis, 6. Translational Demand Analysis, Cross-Species Comparison (optional). Data export: per_gene_codon_freq.tsv, gene_metadata.tsv, analysis_config.json. Exports `{stem}_results.zip`.
 
 **CLI:**
-- `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `enrichment` (alias: `composition`), `demand`, `optimality` (alias: `profile`), `collision`, `attribution` (alias: `disentangle`), `compare`, `cai`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
+- `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `enrichment` (alias: `composition`), `demand`, `optimality` (alias: `profile`), `collision`, `attribution` (alias: `disentangle`), `compare`, `cai`, `reverse`, `deep-dive` (with --positional, --cluster, --cluster-codons, --cluster-top, --window, --permutations, --seed), `differential`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
 
-**Tests (376 passing, 6 skipped):**
+**Tests (475 passing, 6 skipped):**
 - `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds
 - `tests/test_statistics.py` — 29 tests: bootstrap, BH correction, Cohen's d, KS diagnostics, yeast positive controls (RP genes, YEF3)
 - `tests/test_mode1.py` — 19 tests: gene list parsing, composition pipeline, matched background, diagnostics, CLI, RP positive controls
@@ -73,6 +77,10 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `tests/test_id_resolution.py` — 75 tests: GtRNAdb parser (8 tests: 3 formats, T→U, skip iMet/SeC/Sup, mixed), ID regex patterns (10 tests), ID type detection (12 tests across species), backward-compatible resolution (18 tests: yeast/human/mouse), new ID types (10 tests: RefSeq, SGD, UniProt, MGI, Entrez), mixed ID lists (5 tests), download function imports (7 tests), ortholog dispatcher (4 tests), parse function unit tests (5 tests), IDMapping compat (3 tests). 6 tests skipped until mapping files generated by re-download.
 - `tests/test_cai.py` — 22 tests: reference weights (5 unit tests: range, max per family, single-codon AAs), compute_cai (5 unit tests: range, empty, Met-only, optimal, multi-gene), yeast RP integration (8 tests: high CAI >0.7, Mann-Whitney p<0.001, percentile >80, structure, DataFrames), human RP (2 tests), edge cases (2 tests: single gene, small set)
 - `tests/test_glm.py` — 16 tests: _compute_gc3 (6 unit tests), binomial GLM structure (4 tests: raises k>1, correct columns, 59 codons), GLM vs bootstrap correlation (3 tests: RP r>0.7, Gcn4 correlation, significant overlap), run_composition binomial (3 tests: works, rejects k=2, gc3 columns)
+- `tests/test_report_restructure.py` — 21 tests: executive summary (present, top codons, attribution, collision, CAI, waterfall), collapsible sections (details elements, backward-compat headers, metrics), expand/collapse controls, data export (per_gene_codon_freq.tsv, gene_metadata.tsv, analysis_config.json with content validation), footer, CSS
+- `tests/test_reverse.py` — 16 tests: basic single/multi codon, top-N, percentile, sort order, RP gene validation (AGA), invalid/stop codon errors, output files, result structure, U-to-T conversion, default Z cutoff, column presence, check mode, YEF3 validation, CLI
+- `tests/test_deep_dive.py` — 47 tests: load_tier1_data (4), driver analysis (9: basic, significant codons, summary columns, Gini range, N50, contributions, jackknife, output, strict threshold), Gini coefficient (3), deep-dive report (3), CLI (1), positional enrichment (8: basic, shape, Z finite, kmer names, top codons, output, custom bins, species), cluster scan (7: basic, columns, custom codons, summary, perm_p range, output, auto-select), synonymous shuffle (5: AA preservation, within-family, single-codon, mixed, deterministic), compute_positional_freqs (3), CLI extended (4: positional, cluster, both, custom codons)
+- `tests/test_differential.py` — 15 tests: basic, columns, 61 codons, RP vs Gcn4 significant, fold change, rank-biserial range, adjusted_p range, labels, n_genes, output_dir, self-vs-self negative control, custom labels, report generation, report plots, CLI
 
 ### Species data (in `~/.codonscope/data/species/`)
 
@@ -210,6 +218,17 @@ python3 -m codonscope.cli enrichment --species mouse --genes examples/mouse_rp_g
 # Comprehensive HTML report (runs all analyses)
 python3 -m codonscope.cli report --species yeast --genes genelist.txt --output report.html
 python3 -m codonscope.cli report --species yeast --genes genelist.txt --species2 human --output report.html
+
+# Reverse Mode (find genes by codon)
+python3 -m codonscope.cli reverse --species yeast --codons AGA --top 50
+python3 -m codonscope.cli reverse --species yeast --codons AGA GAA --zscore-cutoff 2.0
+
+# Deep-Dive Analysis (requires Tier 1 report output)
+python3 -m codonscope.cli deep-dive --results-dir report_data/ --output deep_dive.html
+python3 -m codonscope.cli deep-dive --results-dir report_data/ --positional --cluster --output-dir results/
+
+# Two-List Differential
+python3 -m codonscope.cli differential --species yeast --list-a rp_genes.txt --list-b gcn4_genes.txt --labels "RP" "Gcn4" --output diff.html
 ```
 
 ## Key dependencies
