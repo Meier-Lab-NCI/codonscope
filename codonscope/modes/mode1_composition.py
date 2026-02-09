@@ -14,6 +14,7 @@ from codonscope.core.codons import CODON_TABLE, all_possible_kmers, annotate_kme
 from codonscope.core.sequences import SequenceDB
 from codonscope.core.statistics import (
     benjamini_hochberg,
+    binomial_glm_zscores,
     bootstrap_pvalues,
     bootstrap_zscores,
     cohens_d,
@@ -39,6 +40,7 @@ def run_composition(
     output_dir: str | Path | None = None,
     seed: int | None = None,
     data_dir: str | Path | None = None,
+    model: str = "bootstrap",
 ) -> dict:
     """Run Mode 1 Sequence Composition analysis.
 
@@ -94,27 +96,44 @@ def run_composition(
     n_genes = len(gene_seqs)
     logger.info("Analyzing %d genes with k=%d", n_genes, k)
 
-    # Choose background file
-    bg_key = {1: "mono", 2: "di", 3: "tri"}[k]
-    bg_path = species_dir / f"background_{bg_key}.npz"
+    # Validate model parameter
+    if model not in ("bootstrap", "binomial"):
+        raise ValueError(f"model must be 'bootstrap' or 'binomial', got {model!r}")
 
-    if background == "matched":
-        results_df = _run_matched_background(
-            gene_seqs, db, bg_path, k=k, trim_ramp=trim_ramp,
-            n_bootstrap=n_bootstrap, seed=seed,
+    if model == "binomial":
+        if k != 1:
+            raise ValueError(
+                "Binomial GLM only supports monocodon (k=1). "
+                f"Got k={k}. Use model='bootstrap' for dicodons/tricodons."
+            )
+        # Load ALL genome sequences for the GLM
+        all_seqs = db.get_all_sequences()
+        results_df = binomial_glm_zscores(
+            gene_seqs, all_seqs, k=1, trim_ramp=trim_ramp,
         )
     else:
-        results_df = compare_to_background(
-            gene_seqs, bg_path, k=k,
-            n_bootstrap=n_bootstrap, trim_ramp=trim_ramp, seed=seed,
-        )
+        # Choose background file
+        bg_key = {1: "mono", 2: "di", 3: "tri"}[k]
+        bg_path = species_dir / f"background_{bg_key}.npz"
 
-    # Add amino acid annotation column
+        if background == "matched":
+            results_df = _run_matched_background(
+                gene_seqs, db, bg_path, k=k, trim_ramp=trim_ramp,
+                n_bootstrap=n_bootstrap, seed=seed,
+            )
+        else:
+            results_df = compare_to_background(
+                gene_seqs, bg_path, k=k,
+                n_bootstrap=n_bootstrap, trim_ramp=trim_ramp, seed=seed,
+            )
+
+    # Add amino acid annotation column (if not already present from GLM)
     def _kmer_to_aa(kmer: str) -> str:
         codons = [kmer[i:i + 3] for i in range(0, len(kmer), 3)]
         return "-".join(CODON_TABLE.get(c, "?") for c in codons)
 
-    results_df["amino_acid"] = results_df["kmer"].apply(_kmer_to_aa)
+    if "amino_acid" not in results_df.columns:
+        results_df["amino_acid"] = results_df["kmer"].apply(_kmer_to_aa)
 
     # Run diagnostics
     diagnostics = _run_diagnostics(gene_seqs, species_dir)
@@ -126,12 +145,15 @@ def run_composition(
         out.mkdir(parents=True, exist_ok=True)
         _write_outputs(results_df, diagnostics, out, k)
 
-    return {
+    result = {
         "results": results_df,
         "diagnostics": diagnostics,
         "id_summary": id_result,
         "n_genes": n_genes,
     }
+    if model == "binomial":
+        result["model"] = "binomial"
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

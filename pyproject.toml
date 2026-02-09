@@ -19,6 +19,7 @@ dependencies = [
     "matplotlib",
     "requests",
     "tqdm",
+    "statsmodels",
 ]
 
 [project.optional-dependencies]

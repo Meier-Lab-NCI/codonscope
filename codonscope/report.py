@@ -26,6 +26,98 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Region-specific enrichment helper
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _run_region_enrichment(
+    species: str,
+    gene_ids: list[str],
+    n_bootstrap: int = 10_000,
+    seed: int | None = None,
+    data_dir=None,
+    ramp_codons: int = 50,
+) -> dict | None:
+    """Run monocodon enrichment separately on ramp (codons 2-50) and body (51+).
+
+    Returns dict with 'ramp' and 'body' DataFrames, or None on failure.
+    """
+    from codonscope.core.codons import CODON_TABLE, all_possible_kmers
+    from codonscope.core.sequences import SequenceDB
+    from codonscope.core.statistics import (
+        benjamini_hochberg,
+        bootstrap_pvalues,
+        bootstrap_zscores,
+        cohens_d,
+        compute_geneset_frequencies,
+    )
+
+    db = SequenceDB(species, data_dir=data_dir)
+    id_mapping = db.resolve_ids(gene_ids)
+    gene_seqs = db.get_sequences(id_mapping)
+    all_seqs = db.get_all_sequences()
+
+    if len(gene_seqs) < 5:
+        return None
+
+    def _slice_region(seqs: dict, start_codon: int, end_codon: int | None) -> dict:
+        """Slice sequences to a codon region (0-indexed). end_codon=None means to end."""
+        result = {}
+        for name, seq in seqs.items():
+            s = start_codon * 3
+            e = end_codon * 3 if end_codon is not None else len(seq)
+            region = seq[s:e]
+            # Must have at least 3 codons
+            if len(region) >= 9:
+                # Trim to codon boundary
+                region = region[:len(region) - len(region) % 3]
+                result[name] = region
+        return result
+
+    results = {}
+    for region_name, start, end in [("ramp", 1, ramp_codons + 1), ("body", ramp_codons + 1, None)]:
+        gs_region = _slice_region(gene_seqs, start, end)
+        bg_region = _slice_region(all_seqs, start, end)
+
+        if len(gs_region) < 5 or len(bg_region) < 100:
+            continue
+
+        # Compute geneset frequencies
+        _, gs_mean, kmer_names = compute_geneset_frequencies(gs_region, k=1)
+
+        # Compute background per-gene frequencies
+        _, bg_mean_arr, bg_kmer_names = compute_geneset_frequencies(bg_region, k=1)
+        # We need the full per-gene matrix for bootstrap
+        bg_per_gene, _, _ = compute_geneset_frequencies(bg_region, k=1)
+
+        z_scores, boot_mean, boot_std = bootstrap_zscores(
+            gs_mean, bg_per_gene, len(gs_region),
+            n_bootstrap=n_bootstrap, seed=seed,
+        )
+        p_values = bootstrap_pvalues(z_scores)
+        adj_p = benjamini_hochberg(p_values)
+
+        # Genome-wide std for cohens_d
+        bg_std = bg_per_gene.std(axis=0, ddof=1).astype(np.float64)
+        d = cohens_d(gs_mean, bg_mean_arr, bg_std)
+
+        df = pd.DataFrame({
+            "kmer": kmer_names,
+            "observed_freq": gs_mean,
+            "expected_freq": boot_mean,
+            "z_score": z_scores,
+            "p_value": p_values,
+            "adjusted_p": adj_p,
+            "cohens_d": d,
+        })
+        # Add amino acid annotation
+        df["amino_acid"] = df["kmer"].map(CODON_TABLE)
+        df = df.sort_values("z_score", key=np.abs, ascending=False).reset_index(drop=True)
+        results[region_name] = df
+
+    return results if results else None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -39,6 +131,7 @@ def generate_report(
     n_bootstrap: int = 10_000,
     seed: int | None = None,
     data_dir: str | Path | None = None,
+    model: str = "bootstrap",
 ) -> Path:
     """Generate a comprehensive HTML report for a gene list.
 
@@ -55,6 +148,7 @@ def generate_report(
         n_bootstrap: Bootstrap iterations for all modes.
         seed: Random seed for reproducibility.
         data_dir: Override default data directory.
+        model: Statistical model for Mode 1 ("bootstrap" or "binomial").
 
     Returns:
         Path to the generated HTML file.
@@ -73,18 +167,41 @@ def generate_report(
     id_mapping = db.resolve_ids(gene_ids)
     gene_meta = db.get_gene_metadata()
 
+    # ── CAI Analysis ────────────────────────────────────────────────────
+    cai_result = None
+    try:
+        logger.info("Computing CAI (Codon Adaptation Index)...")
+        from codonscope.core.cai import cai_analysis
+        cai_result = cai_analysis(species, gene_ids, data_dir=data_dir)
+    except Exception as exc:
+        logger.warning("CAI computation failed: %s", exc)
+
     sections.append(_section_gene_summary(
-        species, gene_ids, id_mapping, gene_meta, db,
+        species, gene_ids, id_mapping, gene_meta, db, cai_result=cai_result,
     ))
 
-    # ── Mode 1: Monocodon composition ────────────────────────────────────
+    if cai_result is not None:
+        cai_result["per_gene"].to_csv(
+            data_dir_out / "cai_per_gene.tsv", sep="\t", index=False, float_format="%.6g",
+        )
+        pd.DataFrame([
+            {"codon": c, "weight": w} for c, w in sorted(cai_result["weights"].items())
+        ]).to_csv(
+            data_dir_out / "cai_weights.tsv", sep="\t", index=False, float_format="%.6g",
+        )
+
+    # ── Section group: Sequence-Level Analysis ───────────────────────
+    sections.append('<div class="group-header">Sequence-Level Analysis</div>')
+
+    # ── Codon Enrichment Analysis ──────────────────────────────────────
     mono_result = None
     try:
-        logger.info("Running Mode 1: monocodon composition...")
+        logger.info("Running Codon Enrichment Analysis...")
         from codonscope.modes.mode1_composition import run_composition
         mono_result = run_composition(
             species=species, gene_ids=gene_ids, k=1,
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
+            model=model,
         )
         sections.append(_section_mode1(mono_result, k=1, species=species, n_bootstrap=n_bootstrap))
         mono_result["results"].to_csv(
@@ -108,12 +225,29 @@ def generate_report(
                 data_dir_out / "mode1_monocodon_matched.tsv", sep="\t", index=False, float_format="%.6g",
             )
     except Exception as exc:
-        logger.warning("Mode 1 (monocodon) failed: %s", exc)
-        sections.append(_section_error("Mode 1: Monocodon Composition", exc))
+        logger.warning("Codon Enrichment Analysis failed: %s", exc)
+        sections.append(_section_error("Codon Enrichment Analysis", exc))
 
-    # ── Mode 1: Dicodon composition ──────────────────────────────────────
+    # ── Region-specific enrichment (ramp vs body) ─────────────────────
     try:
-        logger.info("Running Mode 1: dicodon composition...")
+        logger.info("Running region-specific enrichment (ramp vs body)...")
+        region_results = _run_region_enrichment(
+            species=species, gene_ids=gene_ids,
+            n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
+        )
+        if region_results:
+            sections.append(_section_region_enrichment(region_results, mono_result))
+            for rname, rdf in region_results.items():
+                rdf.to_csv(
+                    data_dir_out / f"enrichment_{rname}.tsv",
+                    sep="\t", index=False, float_format="%.6g",
+                )
+    except Exception as exc:
+        logger.warning("Region-specific enrichment failed: %s", exc)
+
+    # ── Dicodon Enrichment Analysis ────────────────────────────────────
+    try:
+        logger.info("Running Dicodon Enrichment Analysis...")
         di_result = run_composition(
             species=species, gene_ids=gene_ids, k=2,
             n_bootstrap=n_bootstrap, seed=seed, data_dir=data_dir,
@@ -140,12 +274,12 @@ def generate_report(
                 data_dir_out / "mode1_dicodon_matched.tsv", sep="\t", index=False, float_format="%.6g",
             )
     except Exception as exc:
-        logger.warning("Mode 1 (dicodon) failed: %s", exc)
-        sections.append(_section_error("Mode 1: Dicodon Composition", exc))
+        logger.warning("Dicodon Enrichment Analysis failed: %s", exc)
+        sections.append(_section_error("Dicodon Enrichment Analysis", exc))
 
-    # ── Mode 5: Disentanglement ──────────────────────────────────────────
+    # ── AA vs Synonymous Attribution ──────────────────────────────────
     try:
-        logger.info("Running Mode 5: AA vs codon disentanglement...")
+        logger.info("Running AA vs Synonymous Attribution...")
         from codonscope.modes.mode5_disentangle import run_disentangle
         dis_result = run_disentangle(
             species=species, gene_ids=gene_ids,
@@ -156,12 +290,15 @@ def generate_report(
             data_dir_out / "mode5_attribution.tsv", sep="\t", index=False, float_format="%.6g",
         )
     except Exception as exc:
-        logger.warning("Mode 5 failed: %s", exc)
-        sections.append(_section_error("Mode 5: Disentanglement", exc))
+        logger.warning("AA vs Synonymous Attribution failed: %s", exc)
+        sections.append(_section_error("AA vs Synonymous Attribution", exc))
 
-    # ── Mode 3: Optimality Profile ───────────────────────────────────────
+    # ── Section group: Translation-Level Analysis ────────────────────
+    sections.append('<div class="group-header">Translation-Level Analysis</div>')
+
+    # ── Translational Optimality Profile ──────────────────────────────
     try:
-        logger.info("Running Mode 3: optimality profile...")
+        logger.info("Running Translational Optimality Profile...")
         from codonscope.modes.mode3_profile import run_profile
         prof_result = run_profile(
             species=species, gene_ids=gene_ids, data_dir=data_dir,
@@ -179,12 +316,12 @@ def generate_report(
                 data_dir_out / "mode3_body_composition.tsv", sep="\t", index=False, float_format="%.6g",
             )
     except Exception as exc:
-        logger.warning("Mode 3 failed: %s", exc)
-        sections.append(_section_error("Mode 3: Optimality Profile", exc))
+        logger.warning("Translational Optimality Profile failed: %s", exc)
+        sections.append(_section_error("Translational Optimality Profile", exc))
 
-    # ── Mode 4: Collision Potential ──────────────────────────────────────
+    # ── Collision Potential Analysis ──────────────────────────────────
     try:
-        logger.info("Running Mode 4: collision potential...")
+        logger.info("Running Collision Potential Analysis...")
         from codonscope.modes.mode4_collision import run_collision
         col_result = run_collision(
             species=species, gene_ids=gene_ids, data_dir=data_dir,
@@ -198,12 +335,12 @@ def generate_report(
                 data_dir_out / "mode4_fs_dicodons.tsv", sep="\t", index=False, float_format="%.6g",
             )
     except Exception as exc:
-        logger.warning("Mode 4 failed: %s", exc)
-        sections.append(_section_error("Mode 4: Collision Potential", exc))
+        logger.warning("Collision Potential Analysis failed: %s", exc)
+        sections.append(_section_error("Collision Potential Analysis", exc))
 
-    # ── Mode 2: Translational Demand ─────────────────────────────────────
+    # ── Translational Demand Analysis ─────────────────────────────────
     try:
-        logger.info("Running Mode 2: translational demand...")
+        logger.info("Running Translational Demand Analysis...")
         from codonscope.modes.mode2_demand import run_demand
         dem_result = run_demand(
             species=species, gene_ids=gene_ids,
@@ -215,13 +352,13 @@ def generate_report(
             data_dir_out / "mode2_demand.tsv", sep="\t", index=False, float_format="%.6g",
         )
     except Exception as exc:
-        logger.warning("Mode 2 failed: %s", exc)
-        sections.append(_section_error("Mode 2: Translational Demand", exc))
+        logger.warning("Translational Demand Analysis failed: %s", exc)
+        sections.append(_section_error("Translational Demand Analysis", exc))
 
     # ── Mode 6: Cross-Species Comparison ─────────────────────────────────
     if species2:
         try:
-            logger.info("Running Mode 6: cross-species comparison...")
+            logger.info("Running Cross-Species Comparison...")
             from codonscope.modes.mode6_compare import run_compare
             cmp_result = run_compare(
                 species1=species, species2=species2,
@@ -233,8 +370,8 @@ def generate_report(
                 data_dir_out / "mode6_compare.tsv", sep="\t", index=False, float_format="%.6g",
             )
         except Exception as exc:
-            logger.warning("Mode 6 failed: %s", exc)
-            sections.append(_section_error("Mode 6: Cross-Species Comparison", exc))
+            logger.warning("Cross-Species Comparison failed: %s", exc)
+            sections.append(_section_error("Cross-Species Comparison", exc))
 
     # ── Gene mapping TSV ────────────────────────────────────────────────
     mapped_sys = list(id_mapping.values())
@@ -424,6 +561,15 @@ tr:hover td {
 }
 .method-note p { margin: 6px 0; }
 .method-note strong { color: #1e293b; }
+.group-header {
+    color: #0f3460;
+    font-size: 1.4em;
+    font-weight: 700;
+    margin: 35px 0 5px 0;
+    padding: 10px 0 6px 0;
+    border-bottom: 3px solid #0f3460;
+    letter-spacing: 0.3px;
+}
 """
 
 
@@ -469,8 +615,9 @@ def _section_gene_summary(
     id_mapping,
     gene_meta: pd.DataFrame,
     db,
+    cai_result: dict | None = None,
 ) -> str:
-    """Gene list summary with diagnostics."""
+    """Gene list summary with diagnostics and CAI."""
     n_input = len(gene_ids)
     n_mapped = id_mapping.n_mapped
     n_unmapped = id_mapping.n_unmapped
@@ -572,6 +719,182 @@ def _section_gene_summary(
 </div>
 {unmapped_html}
 {mapping_html}
+{_cai_html(cai_result) if cai_result is not None else ""}
+</div>
+"""
+
+
+def _cai_html(cai_result: dict) -> str:
+    """Generate HTML for CAI summary within the gene summary section."""
+    gs_mean = cai_result["geneset_mean"]
+    gs_median = cai_result["geneset_median"]
+    gen_mean = cai_result["genome_mean"]
+    gen_median = cai_result["genome_median"]
+    percentile = cai_result["percentile_rank"]
+    mw_p = cai_result["mann_whitney_p"]
+    n_ref = cai_result["reference_n_genes"]
+
+    # Box plot: gene set CAI vs genome CAI
+    gs_values = cai_result["per_gene"]["cai"].values
+    gen_values = cai_result["genome_per_gene"]["cai"].values
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+
+    # Panel 1: Box plot
+    bp = ax1.boxplot(
+        [gs_values, gen_values],
+        tick_labels=["Gene set", "Genome"],
+        patch_artist=True,
+        widths=0.5,
+    )
+    bp["boxes"][0].set_facecolor("#93c5fd")
+    bp["boxes"][1].set_facecolor("#d1d5db")
+    ax1.set_ylabel("CAI")
+    ax1.set_title("Codon Adaptation Index")
+    # Annotate p-value
+    sig_str = f"p={mw_p:.2e}" if mw_p < 0.001 else f"p={mw_p:.3f}"
+    ax1.annotate(
+        f"Mann-Whitney {sig_str}",
+        xy=(0.5, 0.95), xycoords="axes fraction",
+        ha="center", va="top", fontsize=8,
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
+    )
+
+    # Panel 2: Histogram
+    bins = np.linspace(0, 1, 40)
+    ax2.hist(gen_values, bins=bins, alpha=0.5, label="Genome", color="#94a3b8", density=True)
+    ax2.hist(gs_values, bins=bins, alpha=0.7, label="Gene set", color="#2563eb", density=True)
+    ax2.axvline(gs_mean, color="#2563eb", ls="--", label=f"Gene set mean={gs_mean:.3f}")
+    ax2.axvline(gen_mean, color="#6b7280", ls="--", label=f"Genome mean={gen_mean:.3f}")
+    ax2.set_xlabel("CAI")
+    ax2.set_ylabel("Density")
+    ax2.set_title("CAI Distribution")
+    ax2.legend(fontsize=7)
+
+    fig.tight_layout()
+    plot_b64 = _fig_to_b64(fig)
+
+    mw_class = "ok" if mw_p < 0.05 else ""
+
+    return f"""
+<h3>Codon Adaptation Index (CAI)</h3>
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="label">Gene Set Mean CAI</div>
+    <div class="value">{gs_mean:.3f}</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Genome Mean CAI</div>
+    <div class="value">{gen_mean:.3f}</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Percentile Rank</div>
+    <div class="value">{percentile:.0f}th</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Mann-Whitney p</div>
+    <div class="value {mw_class}">{mw_p:.2e}</div>
+  </div>
+</div>
+<div class="plot-container">{_img_tag(plot_b64)}</div>
+<div class="method-note">
+<p><strong>CAI</strong> (Sharp &amp; Li 1987) measures how closely a gene&rsquo;s
+codon usage matches the most highly-expressed genes in the genome.
+Reference weights are computed from the top {n_ref} genes by expression level.
+For each synonymous family, the most frequent codon in the reference set gets
+weight 1.0; others are scaled proportionally.
+The CAI is the geometric mean of these weights across all codons in a gene
+(excluding Met and Trp, which have only one codon).
+A CAI near 1.0 means the gene uses the same codons as highly-expressed genes;
+lower values indicate divergent codon usage.</p>
+</div>
+"""
+
+
+def _section_region_enrichment(region_results: dict, full_result: dict | None) -> str:
+    """Section showing ramp vs body enrichment comparison."""
+    from codonscope.core.codons import annotate_kmer
+
+    panels = []
+    for region_name in ("ramp", "body"):
+        if region_name not in region_results:
+            continue
+        df = region_results[region_name]
+        sig = df[df["adjusted_p"] < 0.05]
+        n_sig = len(sig)
+        label = "Ramp (codons 2-50)" if region_name == "ramp" else "Body (codons 51+)"
+
+        wf_b64 = _plot_waterfall(df, f"{label}: Ranked Codon Z-scores")
+        panels.append(f"""
+        <h3>{label}</h3>
+        <p>Significant codons (adj_p &lt; 0.05): <strong>{n_sig}</strong></p>
+        <div class="plot-container">{_img_tag(wf_b64)}</div>
+        """)
+
+    # Comparison table: codons with positional bias (different Z direction in ramp vs body)
+    comparison_html = ""
+    if "ramp" in region_results and "body" in region_results:
+        ramp_df = region_results["ramp"].set_index("kmer")
+        body_df = region_results["body"].set_index("kmer")
+        common = set(ramp_df.index) & set(body_df.index)
+
+        biased = []
+        for kmer in sorted(common):
+            rz = ramp_df.loc[kmer, "z_score"]
+            bz = body_df.loc[kmer, "z_score"]
+            # Positionally biased: significant in at least one region AND different direction
+            rp = ramp_df.loc[kmer, "adjusted_p"]
+            bp = body_df.loc[kmer, "adjusted_p"]
+            if (rp < 0.05 or bp < 0.05) and abs(rz - bz) > 2.0:
+                biased.append({
+                    "kmer": kmer,
+                    "label": annotate_kmer(kmer, 1),
+                    "ramp_z": rz,
+                    "body_z": bz,
+                    "delta": rz - bz,
+                    "ramp_p": rp,
+                    "body_p": bp,
+                })
+
+        if biased:
+            biased.sort(key=lambda x: abs(x["delta"]), reverse=True)
+            rows = ""
+            for b in biased[:20]:
+                rz_cls = "sig-pos" if b["ramp_z"] > 0 else "sig-neg"
+                bz_cls = "sig-pos" if b["body_z"] > 0 else "sig-neg"
+                rows += f"""<tr>
+                  <td><strong>{b['label']}</strong></td>
+                  <td class="{rz_cls}">{b['ramp_z']:+.2f}</td>
+                  <td>{b['ramp_p']:.2e}</td>
+                  <td class="{bz_cls}">{b['body_z']:+.2f}</td>
+                  <td>{b['body_p']:.2e}</td>
+                  <td><strong>{b['delta']:+.2f}</strong></td>
+                </tr>"""
+            comparison_html = f"""
+            <h3>Positionally Biased Codons</h3>
+            <p>Codons with large ramp-vs-body Z-score difference (&Delta; &gt; 2.0, significant in at least one region):</p>
+            <table>
+            <tr><th>Codon</th><th>Ramp Z</th><th>Ramp p</th><th>Body Z</th><th>Body p</th><th>&Delta;Z</th></tr>
+            {rows}
+            </table>"""
+
+    method_note = """
+<div class="method-note">
+<p><strong>Region-specific enrichment.</strong> The CDS is split into
+<strong>ramp</strong> (codons 2&ndash;50, the translation initiation zone)
+and <strong>body</strong> (codon 51 onward). Enrichment is computed separately
+for each region against the same region in all genome genes.
+Codons that are enriched in the ramp but not the body (or vice versa)
+may reflect position-specific translational selection &mdash; for example,
+slow codons enriched in the ramp to pace early elongation.</p>
+</div>"""
+
+    return f"""
+<div class="section">
+<h2>Region-Specific Codon Enrichment</h2>
+{"".join(panels)}
+{comparison_html}
+{method_note}
 </div>
 """
 
@@ -602,7 +925,17 @@ def _section_mode1(result: dict, k: int, species: str = "", n_bootstrap: int = 1
         diag_html = f'<div class="error-box"><strong>Diagnostics:</strong><ul style="margin:4px 0">{items}</ul></div>'
 
     # Volcano plot
-    plot_b64 = _plot_volcano(df, f"Mode 1: {kname} Composition (n={n_genes} genes)")
+    section_title = {1: "Codon Enrichment Analysis", 2: "Dicodon Enrichment Analysis", 3: "Tricodon Enrichment Analysis"}[k]
+    plot_b64 = _plot_volcano(df, f"{section_title} (n={n_genes} genes)")
+
+    # Waterfall bar chart
+    waterfall_html = ""
+    if k == 1:
+        wf_b64 = _plot_waterfall(df, f"Ranked Codon Z-scores (n={n_genes} genes)")
+        waterfall_html = f'<div class="plot-container">{_img_tag(wf_b64)}</div>'
+    elif k == 2:
+        wf_b64 = _plot_waterfall_dicodon(df, f"Ranked Dicodon Z-scores (n={n_genes} genes)")
+        waterfall_html = f'<div class="plot-container">{_img_tag(wf_b64)}</div>'
 
     # Top tables
     top_enriched = _results_table(enriched.head(30), k)
@@ -632,7 +965,7 @@ def _section_mode1(result: dict, k: int, species: str = "", n_bootstrap: int = 1
             "If your gene set uses AAG (Lys) more than the genome average, "
             "that codon shows up as enriched. Could be translational selection, "
             "could be amino acid composition, could be GC bias &mdash; "
-            "Mode 5 below will help sort that out."
+            "the Attribution analysis below will help sort that out."
         )
     elif k == 2:
         kmer_desc = (
@@ -654,7 +987,31 @@ def _section_mode1(result: dict, k: int, species: str = "", n_bootstrap: int = 1
             "These use analytic standard errors rather than bootstrap."
         )
 
-    method_note = f"""
+    is_binomial = result.get("model") == "binomial"
+
+    if is_binomial:
+        method_note = f"""
+<div class="method-note">
+<p><strong>What this is.</strong> We took your {n_genes} genes and compared their
+{kmer_desc} frequencies against all {db_desc}. {isoform_note}</p>
+<p><strong>GC3-corrected binomial GLM</strong> (Doyle, Nanda &amp; Begley 2025).
+For each codon, we fit a binomial generalised linear model:
+<code>logit(p) = &beta;<sub>0</sub> + &beta;<sub>1</sub>&middot;gene_set + &beta;<sub>2</sub>&middot;GC3</code>,
+where <em>p</em> is the proportion of that codon within its synonymous amino acid family,
+<em>gene_set</em> is a 0/1 indicator for membership in your gene list, and <em>GC3</em>
+is the GC content at third codon positions. The <strong>Z-score</strong> is the Wald
+statistic for &beta;<sub>1</sub> &mdash; the gene-set effect after controlling for
+GC3 composition bias. This is more conservative than bootstrap for codons whose
+enrichment is driven by GC content rather than genuine translational selection.</p>
+<p><strong>GC3 coefficient.</strong> The <code>gc3_beta</code> column shows how
+strongly each codon&rsquo;s usage is predicted by third-position GC content.
+Large positive values indicate G/C-ending codons; large negative values indicate
+A/T-ending codons. If the bootstrap Z-score was large but the GLM Z-score is small,
+GC bias was likely the main driver.</p>
+<p>{what_it_means}</p>
+</div>"""
+    else:
+        method_note = f"""
 <div class="method-note">
 <p><strong>What this is.</strong> We took your {n_genes} genes and compared their
 {kmer_desc} frequencies against all {db_desc}. {isoform_note}</p>
@@ -682,6 +1039,7 @@ GC-matched genes if you want to be thorough about it.</p>
 </div>"""
 
     bg_suffix = f" (length+GC matched)" if background_label == "matched" else ""
+    model_suffix = " (binomial GLM, GC3-corrected)" if is_binomial else ""
     matched_note = ""
     if background_label == "matched":
         matched_note = (
@@ -695,12 +1053,13 @@ GC-matched genes if you want to be thorough about it.</p>
 
     return f"""
 <div class="section">
-<h2>Mode 1: {kname} Composition{bg_suffix}</h2>
+<h2>{section_title}{bg_suffix}{model_suffix}</h2>
 <p>Genes analyzed: <strong>{n_genes}</strong> &nbsp;|&nbsp;
    Significant {kname.lower()}s (adj_p &lt; 0.05): <strong>{n_sig}</strong></p>
 {diag_html}
 {matched_note}
 <div class="plot-container">{_img_tag(plot_b64)}</div>
+{waterfall_html}
 <h3>Top Enriched ({len(enriched)} total)</h3>
 {top_enriched}
 <h3>Top Depleted ({len(depleted)} total)</h3>
@@ -772,7 +1131,7 @@ def _section_mode5(result: dict, species: str = "") -> str:
 
     method_note = """
 <div class="method-note">
-<p><strong>The problem.</strong> Mode 1 told you <em>which</em> codons are
+<p><strong>The problem.</strong> The enrichment analysis told you <em>which</em> codons are
 biased, but not <em>why</em>. If your gene set is enriched for GCT (Ala),
 is that because the proteins literally need more alanine (amino acid composition),
 or because among the four Ala codons the cell is picking GCT specifically
@@ -783,7 +1142,7 @@ gene set and the genome.
 <strong>Layer 2</strong> computes RSCU (Relative Synonymous Codon Usage) within
 each amino acid family. RSCU = 1.0 means a codon is used equally with its
 synonyms; RSCU &gt; 1 means preferred, &lt; 1 means avoided.
-Both layers are tested with bootstrap Z-scores, same as Mode 1.</p>
+Both layers are tested with bootstrap Z-scores, same as the enrichment analysis.</p>
 <p><strong>Attribution.</strong> Each codon gets classified:
 <strong>AA-driven</strong> = the amino acid itself is enriched/depleted, but
 synonymous usage is normal (it&rsquo;s about protein composition, not codon choice).
@@ -801,7 +1160,7 @@ three neat categories.</p>
 
     return f"""
 <div class="section">
-<h2>Mode 5: AA vs Codon Disentanglement</h2>
+<h2>AA vs Synonymous Attribution</h2>
 <p>Genes analyzed: <strong>{n_genes}</strong></p>
 <p>{summary_text}</p>
 <div class="plot-container">{_img_tag(pie_b64)}</div>
@@ -881,7 +1240,7 @@ fun like that.</p>
 
     return f"""
 <div class="section">
-<h2>Mode 3: Optimality Profile</h2>
+<h2>Translational Optimality Profile</h2>
 <p>Genes analyzed: <strong>{n_genes}</strong> &nbsp;|&nbsp;
    Mean {col.upper()}: <strong>{mean_score:.4f}</strong> (std {std_score:.4f})</p>
 <div class="summary-grid">
@@ -937,7 +1296,7 @@ slow codon is a recipe for trouble: the trailing ribosome catches up and &mdash;
 bam &mdash; collision. This mode asks whether your gene set has more or fewer of these
 fast-to-slow (FS) transitions than you&rsquo;d expect from the genome.</p>
 <p><strong>Fast vs slow.</strong> Every codon is classified as &ldquo;fast&rdquo; or
-&ldquo;slow&rdquo; based on its wtAI score (see Mode 3). The threshold is the
+&ldquo;slow&rdquo; based on its wtAI score (see Translational Optimality Profile above). The threshold is the
 <strong>median wtAI</strong> across all codons, computed from {trna_note}.
 Above the median = fast, below = slow. It&rsquo;s a rough binary, sure, but it
 captures the basic kinetics.</p>
@@ -964,9 +1323,15 @@ the transition pattern is genuinely unusual, not just noisy.</p>
     if fs_dicodons is not None and len(fs_dicodons) > 0:
         fs_dicodon_html = _fs_dicodon_table(fs_dicodons)
 
+    # Collision waterfall bar chart
+    collision_waterfall_html = ""
+    cw_b64 = _plot_collision_waterfall(result)
+    if cw_b64:
+        collision_waterfall_html = f'<div class="plot-container">{_img_tag(cw_b64)}</div>'
+
     return f"""
 <div class="section">
-<h2>Mode 4: Collision Potential</h2>
+<h2>Collision Potential Analysis</h2>
 <p>Genes analyzed: <strong>{n_genes}</strong> &nbsp;|&nbsp;
    Fast/slow threshold: {result['threshold']:.4f}</p>
 <div class="summary-grid">
@@ -992,6 +1357,7 @@ the transition pattern is genuinely unusual, not just noisy.</p>
 <tr><th>Transition</th><th>Gene Set</th><th>Genome</th><th>Fold Change</th></tr>
 {"".join(f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>{gs[t]/bg[t]:.3f}</td></tr>' if bg[t] > 0 else f'<tr><td><strong>{t}</strong></td><td>{gs[t]:.4f}</td><td>{bg[t]:.4f}</td><td>-</td></tr>' for t in ('FF','FS','SF','SS'))}
 </table>
+{collision_waterfall_html}
 {fs_dicodon_html}
 <p><em>Full results available in the data/ directory.</em></p>
 {method_note}
@@ -1091,7 +1457,7 @@ def _section_mode2(result: dict, species: str = "") -> str:
 
     method_note = f"""
 <div class="method-note">
-<p><strong>What this is.</strong> Mode 1 treats every gene equally &mdash; a gene
+<p><strong>What this is.</strong> The enrichment analysis treats every gene equally &mdash; a gene
 expressed at 0.1 TPM counts the same as one at 10,000 TPM. That&rsquo;s fine for
 asking &ldquo;what codons does this gene set prefer?&rdquo; but it ignores a
 crucial reality: the ribosome doesn&rsquo;t care about your gene list, it cares
@@ -1117,7 +1483,7 @@ one outlier or are a genuine group effect.</p>
 
     return f"""
 <div class="section">
-<h2>Mode 2: Translational Demand</h2>
+<h2>Translational Demand Analysis</h2>
 <p>Genes analyzed: <strong>{n_genes}</strong> &nbsp;|&nbsp;
    Expression: <strong>{escape(str(tissue))}</strong> &nbsp;|&nbsp;
    Significant codons: <strong>{n_sig}</strong></p>
@@ -1204,7 +1570,7 @@ each species optimises the same proteins with different codons.</p>
 
     return f"""
 <div class="section">
-<h2>Mode 6: Cross-Species Comparison</h2>
+<h2>Cross-Species Comparison</h2>
 <p>Ortholog pairs: <strong>{n_ortho}</strong> (gene set)  /
    <strong>{n_genome}</strong> (genome)</p>
 <div class="summary-grid">
@@ -1305,18 +1671,20 @@ def _generate_readme(
     tsv_files = sorted(data_dir_out.glob("*.tsv"))
     file_descriptions = {
         "gene_mapping.tsv": "Input ID -> Gene name -> Systematic/Ensembl ID mapping",
-        "mode1_monocodon.tsv": "Mode 1: Single codon (monocodon) composition vs genome, Z-scores and adjusted p-values",
-        "mode1_monocodon_matched.tsv": "Mode 1: Monocodon composition vs length+GC matched background",
-        "mode1_dicodon.tsv": "Mode 1: Adjacent codon pair (dicodon) composition vs genome",
-        "mode1_dicodon_matched.tsv": "Mode 1: Dicodon composition vs length+GC matched background",
-        "mode2_demand.tsv": "Mode 2: Expression-weighted translational demand per codon",
-        "mode3_profile.tsv": "Mode 3: Per-gene optimality scores (tAI/wtAI)",
-        "mode3_ramp_composition.tsv": "Mode 3: Codon composition in the 5' ramp region",
-        "mode3_body_composition.tsv": "Mode 3: Codon composition in the gene body (post-ramp)",
-        "mode4_collision.tsv": "Mode 4: Per-gene fast-to-slow (FS) transition fractions",
-        "mode4_fs_dicodons.tsv": "Mode 4: Per-dicodon FS enrichment breakdown",
-        "mode5_attribution.tsv": "Mode 5: Per-codon attribution (AA-driven vs synonymous codon choice)",
-        "mode6_compare.tsv": "Mode 6: Per-gene cross-species RSCU correlation",
+        "mode1_monocodon.tsv": "Codon Enrichment: Single codon frequencies vs genome, Z-scores and adjusted p-values",
+        "mode1_monocodon_matched.tsv": "Codon Enrichment: Monocodon vs length+GC matched background",
+        "mode1_dicodon.tsv": "Dicodon Enrichment: Adjacent codon pair frequencies vs genome",
+        "mode1_dicodon_matched.tsv": "Dicodon Enrichment: Dicodon vs length+GC matched background",
+        "mode2_demand.tsv": "Translational Demand: Expression-weighted demand per codon",
+        "mode3_profile.tsv": "Optimality Profile: Per-gene optimality scores (tAI/wtAI)",
+        "mode3_ramp_composition.tsv": "Optimality Profile: Codon composition in the 5' ramp region",
+        "mode3_body_composition.tsv": "Optimality Profile: Codon composition in the gene body (post-ramp)",
+        "mode4_collision.tsv": "Collision Potential: Per-gene fast-to-slow (FS) transition fractions",
+        "mode4_fs_dicodons.tsv": "Collision Potential: Per-dicodon FS enrichment breakdown",
+        "mode5_attribution.tsv": "Attribution: Per-codon attribution (AA-driven vs synonymous codon choice)",
+        "mode6_compare.tsv": "Cross-Species: Per-gene RSCU correlation between orthologs",
+        "cai_per_gene.tsv": "CAI: Per-gene Codon Adaptation Index scores",
+        "cai_weights.tsv": "CAI: Reference codon weights (from top 5% expressed genes)",
     }
 
     file_list = ""
@@ -1359,30 +1727,37 @@ FILES IN THIS ARCHIVE
 {file_list}
 ANALYSIS MODES
 {'-' * 40}
-Mode 1 (Composition): Compares mono- and dicodon frequencies in your gene set
+Codon Enrichment Analysis: Compares mono-codon frequencies in your gene set
   vs the genome background. Uses bootstrap resampling ({n_bootstrap:,} iterations)
   to compute Z-scores. Benjamini-Hochberg FDR correction applied.
   Columns: kmer, amino_acid, observed_freq, expected_freq, z_score, p_value,
   adjusted_p, cohens_d
 
-Mode 2 (Translational Demand): Weights each gene's codon usage by its
-  expression level (TPM x number of codons). Shows which codons the ribosome
-  pool is disproportionately decoding in your gene set vs the genome.
+Dicodon Enrichment Analysis: Compares adjacent codon pair (dicodon)
+  frequencies vs the genome background. Same statistical framework as above.
 
-Mode 3 (Optimality Profile): Scores each codon position using the wobble-
-  penalized tRNA Adaptation Index (wtAI). Higher = more efficiently decoded.
-  Metagene profile normalised to 100 positional bins. Ramp analysis compares
-  the first {50} codons to the gene body.
-
-Mode 4 (Collision Potential): Classifies codons as fast/slow based on wtAI,
-  then counts Fast-to-Fast (FF), Fast-to-Slow (FS), Slow-to-Fast (SF), and
-  Slow-to-Slow (SS) transitions. FS transitions are collision-prone.
-
-Mode 5 (Disentanglement): Separates amino acid composition effects from
+AA vs Synonymous Attribution: Separates amino acid composition effects from
   synonymous codon choice (RSCU). Classifies each significant codon as
   AA-driven, Synonymous-driven, or Both.
 
-Mode 6 (Cross-Species): Computes per-gene RSCU correlation between ortholog
+Codon Adaptation Index (CAI): Classic measure of codon optimality (Sharp &
+  Li 1987). Reference weights from top 5% expressed genes. CAI is the geometric
+  mean of per-codon weights. Genome percentile rank and Mann-Whitney U test.
+
+Translational Optimality Profile: Scores each codon position using the wobble-
+  penalized tRNA Adaptation Index (wtAI). Higher = more efficiently decoded.
+  Metagene profile normalised to 100 positional bins. Ramp analysis compares
+  the first 50 codons to the gene body.
+
+Collision Potential Analysis: Classifies codons as fast/slow based on wtAI,
+  then counts Fast-to-Fast (FF), Fast-to-Slow (FS), Slow-to-Fast (SF), and
+  Slow-to-Slow (SS) transitions. FS transitions are collision-prone.
+
+Translational Demand Analysis: Weights each gene's codon usage by its
+  expression level (TPM x number of codons). Shows which codons the ribosome
+  pool is disproportionately decoding in your gene set vs the genome.
+
+Cross-Species Comparison: Computes per-gene RSCU correlation between ortholog
   pairs across species. High r = conserved codon preferences, low r = divergent.
 
 REFERENCE DATA SOURCES
@@ -1663,6 +2038,147 @@ def _plot_volcano(df: pd.DataFrame, title: str) -> str:
     ax.set_ylabel("-log10(adjusted p-value)")
     ax.set_title(title)
     ax.legend(fontsize=8, loc="upper right")
+    fig.tight_layout()
+    return _fig_to_b64(fig)
+
+
+def _plot_waterfall(df: pd.DataFrame, title: str) -> str:
+    """Ranked waterfall bar chart for all 61 codons by Z-score.
+
+    C-ending codons in red, others in gray. Labels: "AAG (Lys)".
+    Significance threshold lines at Z = +/- 1.96.
+    """
+    from codonscope.core.codons import CODON_TABLE, annotate_kmer
+
+    # Sort all codons by Z-score descending
+    sorted_df = df.sort_values("z_score", ascending=False).reset_index(drop=True)
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    zvals = sorted_df["z_score"].values
+    kmers = sorted_df["kmer"].values
+
+    # Color: C-ending codons red, others gray
+    colors = []
+    for km in kmers:
+        if km.endswith("C"):
+            colors.append("#dc2626")
+        else:
+            colors.append("#94a3b8")
+
+    ax.bar(range(len(zvals)), zvals, color=colors, width=0.8, edgecolor="none")
+
+    # Significance threshold lines
+    ax.axhline(1.96, color="#059669", ls="--", lw=0.8, alpha=0.6)
+    ax.axhline(-1.96, color="#059669", ls="--", lw=0.8, alpha=0.6)
+    ax.axhline(0, color="black", lw=0.5, alpha=0.3)
+
+    # Labels
+    labels = [annotate_kmer(km, 1) for km in kmers]
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=90, fontsize=6)
+    ax.set_ylabel("Z-score")
+    ax.set_title(title)
+
+    # Legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor="#dc2626", label="C-ending codons"),
+        Patch(facecolor="#94a3b8", label="Other codons"),
+    ]
+    ax.legend(handles=legend_elements, fontsize=7, loc="upper right")
+
+    fig.tight_layout()
+    return _fig_to_b64(fig)
+
+
+def _plot_waterfall_dicodon(df: pd.DataFrame, title: str) -> str:
+    """Ranked waterfall bar chart for top 30 enriched + bottom 30 depleted dicodons."""
+    from codonscope.core.codons import annotate_kmer
+
+    sorted_df = df.sort_values("z_score", ascending=False).reset_index(drop=True)
+    top = sorted_df.head(30)
+    bottom = sorted_df.tail(30)
+    show_df = pd.concat([top, bottom]).reset_index(drop=True)
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    zvals = show_df["z_score"].values
+    kmers = show_df["kmer"].values
+
+    colors = ["#dc2626" if z > 0 else "#2563eb" for z in zvals]
+    ax.bar(range(len(zvals)), zvals, color=colors, width=0.8, edgecolor="none")
+
+    ax.axhline(1.96, color="#059669", ls="--", lw=0.8, alpha=0.6)
+    ax.axhline(-1.96, color="#059669", ls="--", lw=0.8, alpha=0.6)
+    ax.axhline(0, color="black", lw=0.5, alpha=0.3)
+
+    labels = [annotate_kmer(km, 2) for km in kmers]
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=90, fontsize=5)
+    ax.set_ylabel("Z-score")
+    ax.set_title(title)
+
+    fig.tight_layout()
+    return _fig_to_b64(fig)
+
+
+def _plot_collision_waterfall(result: dict) -> str:
+    """Ranked bar chart of top 40 enriched + top 40 depleted dicodon transitions.
+
+    Colored by transition type: FF=blue, FS=red, SF=orange, SS=gray.
+    """
+    from codonscope.core.codons import annotate_kmer
+
+    fs_dicodons = result.get("fs_dicodons")
+    if fs_dicodons is None or len(fs_dicodons) == 0:
+        return ""
+
+    # Sort by Z-score
+    sorted_df = fs_dicodons.sort_values("z_score", ascending=False).reset_index(drop=True)
+
+    # Top 40 enriched + top 40 depleted
+    top = sorted_df.head(40)
+    bottom = sorted_df.tail(40)
+    show_df = pd.concat([top, bottom]).reset_index(drop=True)
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+
+    zvals = show_df["z_score"].values
+
+    # Color by transition type if available, otherwise by Z direction
+    type_colors = {"FF": "#2563eb", "FS": "#dc2626", "SF": "#f59e0b", "SS": "#94a3b8"}
+    colors = []
+    if "transition_type" in show_df.columns:
+        for _, row in show_df.iterrows():
+            colors.append(type_colors.get(row["transition_type"], "#94a3b8"))
+    else:
+        colors = ["#dc2626" if z > 0 else "#2563eb" for z in zvals]
+
+    ax.bar(range(len(zvals)), zvals, color=colors, width=0.8, edgecolor="none")
+    ax.axhline(0, color="black", lw=0.5, alpha=0.3)
+    ax.axhline(1.96, color="#059669", ls="--", lw=0.8, alpha=0.6)
+    ax.axhline(-1.96, color="#059669", ls="--", lw=0.8, alpha=0.6)
+
+    if "dicodon" in show_df.columns:
+        labels = [annotate_kmer(str(d), 2) for d in show_df["dicodon"].values]
+    else:
+        labels = [str(i) for i in range(len(zvals))]
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=90, fontsize=5)
+    ax.set_ylabel("Z-score")
+    ax.set_title("Collision Potential: Ranked Dicodon Transitions")
+
+    # Legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor="#2563eb", label="FF (fast-fast)"),
+        Patch(facecolor="#dc2626", label="FS (fast-slow)"),
+        Patch(facecolor="#f59e0b", label="SF (slow-fast)"),
+        Patch(facecolor="#94a3b8", label="SS (slow-slow)"),
+    ]
+    ax.legend(handles=legend_elements, fontsize=7, loc="upper right")
+
     fig.tight_layout()
     return _fig_to_b64(fig)
 

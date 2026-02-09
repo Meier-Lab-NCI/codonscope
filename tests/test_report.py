@@ -91,12 +91,12 @@ class TestReportGeneration:
             )
             content = output.read_text()
             assert "Gene List Summary" in content
-            assert "Mode 1: Monocodon Composition" in content
-            assert "Mode 1: Dicodon Composition" in content
-            assert "Mode 5: AA vs Codon Disentanglement" in content
-            assert "Mode 3: Optimality Profile" in content
-            assert "Mode 4: Collision Potential" in content
-            assert "Mode 2: Translational Demand" in content
+            assert "Codon Enrichment Analysis" in content
+            assert "Dicodon Enrichment Analysis" in content
+            assert "AA vs Synonymous Attribution" in content
+            assert "Translational Optimality Profile" in content
+            assert "Collision Potential Analysis" in content
+            assert "Translational Demand Analysis" in content
 
     def test_report_has_embedded_images(self):
         from codonscope.report import generate_report
@@ -169,8 +169,8 @@ class TestGcn4Report:
             )
             assert result.exists()
             content = result.read_text()
-            assert "Mode 1: Monocodon" in content
-            assert "Mode 5" in content
+            assert "Codon Enrichment Analysis" in content
+            assert "AA vs Synonymous Attribution" in content
 
     def test_gcn4_dicodon_shows_enrichment(self):
         """Gcn4 genes should show dicodon enrichment results."""
@@ -186,7 +186,7 @@ class TestGcn4Report:
                 seed=42,
             )
             content = output.read_text()
-            assert "Mode 1: Dicodon Composition" in content
+            assert "Dicodon Enrichment Analysis" in content
             assert "Top Enriched" in content
 
 
@@ -217,7 +217,7 @@ class TestCrossSpeciesReport:
             )
             assert result.exists()
             content = result.read_text()
-            assert "Mode 6: Cross-Species Comparison" in content
+            assert "Cross-Species Comparison" in content
             assert "Most Conserved" in content
             assert "Most Divergent" in content
 

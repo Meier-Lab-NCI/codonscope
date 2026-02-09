@@ -391,3 +391,209 @@ def compare_to_background(
         "cohens_d": d,
     })
     return df.sort_values("z_score", key=np.abs, ascending=False).reset_index(drop=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Binomial GLM (GC3-corrected)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _compute_gc3(sequence: str) -> float:
+    """Compute GC content at third codon positions.
+
+    Args:
+        sequence: CDS nucleotide sequence (must be divisible by 3).
+
+    Returns:
+        Fraction of G+C at the third position of each codon (0.0–1.0).
+    """
+    if len(sequence) < 3:
+        return 0.0
+    n_codons = len(sequence) // 3
+    gc_count = 0
+    for i in range(n_codons):
+        base = sequence[i * 3 + 2]  # third position
+        if base in ("G", "C"):
+            gc_count += 1
+    return gc_count / n_codons if n_codons > 0 else 0.0
+
+
+def binomial_glm_zscores(
+    geneset_sequences: dict[str, str],
+    all_sequences: dict[str, str],
+    k: int = 1,
+    trim_ramp: int = 0,
+) -> pd.DataFrame:
+    """Compute GC3-corrected binomial GLM Z-scores for monocodon composition.
+
+    For each codon, fits: logit(p_i) = beta_0 + beta_1*gene_set_i + beta_2*gc3_i
+    where p_i is the proportion of that codon within its synonymous family
+    for gene i.
+
+    Only supports k=1 (monocodon). Raises ValueError for k>1.
+
+    Args:
+        geneset_sequences: {gene_name: cds_sequence} for the user gene set.
+        all_sequences: {gene_name: cds_sequence} for ALL genome genes.
+        k: Must be 1. Raises ValueError otherwise.
+        trim_ramp: Number of leading codons to exclude.
+
+    Returns:
+        DataFrame with columns: kmer, observed_freq, expected_freq,
+        z_score, p_value, adjusted_p, cohens_d, amino_acid,
+        gc3_beta, gc3_pvalue
+    """
+    if k != 1:
+        raise ValueError(
+            f"Binomial GLM only supports monocodon (k=1), got k={k}. "
+            "Dicodons have no natural synonymous family grouping."
+        )
+
+    import statsmodels.api as sm
+
+    from codonscope.core.codons import CODON_TABLE, SENSE_CODONS
+
+    # Build AA → codon family mapping
+    aa_to_codons: dict[str, list[str]] = {}
+    for c, aa in CODON_TABLE.items():
+        aa_to_codons.setdefault(aa, []).append(c)
+
+    # Skip single-codon families
+    multi_codon_aas = {aa: codons for aa, codons in aa_to_codons.items() if len(codons) > 1}
+
+    geneset_names = set(geneset_sequences.keys())
+
+    # Pre-compute per-gene: codon counts and GC3
+    gene_names = sorted(all_sequences.keys())
+    gene_codon_counts: dict[str, dict[str, int]] = {}
+    gene_gc3: dict[str, float] = {}
+
+    for gene in gene_names:
+        seq = all_sequences[gene]
+        if trim_ramp > 0:
+            skip_nt = trim_ramp * 3
+            if skip_nt >= len(seq):
+                continue
+            seq = seq[skip_nt:]
+            remainder = len(seq) % 3
+            if remainder:
+                seq = seq[:len(seq) - remainder]
+        if len(seq) < 3:
+            continue
+        gene_gc3[gene] = _compute_gc3(seq)
+        counts: dict[str, int] = {}
+        n_codons_gene = len(seq) // 3
+        for i in range(n_codons_gene):
+            c = seq[i * 3: i * 3 + 3]
+            counts[c] = counts.get(c, 0) + 1
+        gene_codon_counts[gene] = counts
+
+    # Also compute gene-set frequencies (for observed_freq column)
+    _, gs_mean, kmer_names = compute_geneset_frequencies(
+        geneset_sequences, k=1, trim_ramp=trim_ramp,
+    )
+    kmer_to_idx = {km: i for i, km in enumerate(kmer_names)}
+
+    # Background mean (for expected_freq and cohens_d)
+    _, all_mean, _ = compute_geneset_frequencies(all_sequences, k=1, trim_ramp=trim_ramp)
+    # Background std
+    all_gene_names_sorted = sorted(all_sequences.keys())
+    from codonscope.core.codons import kmer_frequencies as _kmer_freq
+    n_kmers = len(kmer_names)
+    per_gene_mat = np.zeros((len(all_gene_names_sorted), n_kmers), dtype=np.float32)
+    for gi, gene in enumerate(all_gene_names_sorted):
+        seq = all_sequences[gene]
+        if trim_ramp > 0:
+            skip_nt = trim_ramp * 3
+            if skip_nt < len(seq):
+                seq = seq[skip_nt:]
+                remainder = len(seq) % 3
+                if remainder:
+                    seq = seq[:len(seq) - remainder]
+        if len(seq) >= 3:
+            freqs = _kmer_freq(seq, k=1)
+            for km, f in freqs.items():
+                idx = kmer_to_idx.get(km)
+                if idx is not None:
+                    per_gene_mat[gi, idx] = f
+    bg_std = per_gene_mat.std(axis=0).astype(np.float64)
+
+    valid_genes = [g for g in gene_names if g in gene_codon_counts]
+
+    results = []
+
+    for codon in SENSE_CODONS:
+        aa = CODON_TABLE.get(codon)
+        if aa is None or aa not in multi_codon_aas:
+            continue
+        family = multi_codon_aas[aa]
+
+        # Build per-gene data for this codon
+        k_vals = []  # count of focal codon
+        n_vals = []  # total count of synonymous family
+        gs_indicator = []
+        gc3_vals = []
+
+        for gene in valid_genes:
+            counts = gene_codon_counts[gene]
+            k_i = counts.get(codon, 0)
+            n_i = sum(counts.get(c, 0) for c in family)
+            if n_i == 0:
+                continue
+            k_vals.append(k_i)
+            n_vals.append(n_i)
+            gs_indicator.append(1.0 if gene in geneset_names else 0.0)
+            gc3_vals.append(gene_gc3.get(gene, 0.5))
+
+        if len(k_vals) < 10:
+            continue
+
+        k_arr = np.array(k_vals, dtype=np.float64)
+        n_arr = np.array(n_vals, dtype=np.float64)
+        gs_arr = np.array(gs_indicator, dtype=np.float64)
+        gc3_arr = np.array(gc3_vals, dtype=np.float64)
+
+        # Binomial GLM: endog = (successes, failures), exog = [1, gene_set, gc3]
+        endog = np.column_stack([k_arr, n_arr - k_arr])
+        exog = sm.add_constant(np.column_stack([gs_arr, gc3_arr]))
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                model = sm.GLM(endog, exog, family=sm.families.Binomial())
+                fit = model.fit(disp=0)
+
+            z_score = float(fit.tvalues[1])
+            p_value = float(fit.pvalues[1])
+            gc3_beta = float(fit.params[2])
+            gc3_pvalue = float(fit.pvalues[2])
+        except Exception:
+            z_score = 0.0
+            p_value = 1.0
+            gc3_beta = 0.0
+            gc3_pvalue = 1.0
+
+        idx = kmer_to_idx.get(codon)
+        obs_freq = float(gs_mean[idx]) if idx is not None else 0.0
+        exp_freq = float(all_mean[idx]) if idx is not None else 0.0
+        d = float((obs_freq - exp_freq) / bg_std[idx]) if idx is not None and bg_std[idx] > 0 else 0.0
+
+        results.append({
+            "kmer": codon,
+            "observed_freq": obs_freq,
+            "expected_freq": exp_freq,
+            "z_score": z_score,
+            "p_value": p_value,
+            "cohens_d": d,
+            "amino_acid": aa,
+            "gc3_beta": gc3_beta,
+            "gc3_pvalue": gc3_pvalue,
+        })
+
+    df = pd.DataFrame(results)
+    if len(df) == 0:
+        return df
+
+    # BH correction
+    df["adjusted_p"] = benjamini_hochberg(df["p_value"].values)
+
+    return df.sort_values("z_score", key=np.abs, ascending=False).reset_index(drop=True)

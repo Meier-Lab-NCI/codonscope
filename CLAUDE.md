@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**338 tests passing (+ 6 skipped pending re-download). 31 commits on main.**
+**376 tests passing (+ 6 skipped pending re-download). 31 commits on main.**
 
 ### Build progress
 
@@ -27,6 +27,8 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 11 | Enhanced ID resolution + mouse data sources | ✅ Done |
 | 12 | Gene name display, full results export, Colab fixes | ✅ Done |
 | 13 | Pilot gene lists, Colab UX improvements | ✅ Done |
+| 14 | CAI + binomial GLM alternative for Mode 1 | ✅ Done |
+| 15 | Descriptive mode names, waterfall charts, region enrichment | ✅ Done |
 
 ### What exists (files and what they do)
 
@@ -34,8 +36,9 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/__init__.py` — version 0.1.0
 - `codonscope/core/codons.py` — k-mer counting engine (mono/di/tri), `sequence_to_codons()`, `count_kmers()`, `kmer_frequencies()`, `all_possible_kmers()`, `SENSE_CODONS` (61 sense codons)
 - `codonscope/core/sequences.py` — `SequenceDB` class with lazy CDS loading, `IDMapping` result class. Enhanced multi-type ID resolution with auto-detection: yeast (systematic name, common name, SGD ID, UniProt), human (HGNC symbol, ENSG, ENST, Entrez ID, RefSeq NM_, UniProt, HGNC aliases), mouse (MGI symbol, ENSMUSG, ENSMUST, MGI ID, Entrez ID, UniProt, MGI synonyms). Supports mixed ID types per gene list. `get_sequences()` accepts IDMapping, dict, or list[str]. `get_common_names()` maps systematic names to gene symbols. Context-specific unmapped gene warnings (e.g. "not in MANE Select").
-- `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline
+- `codonscope/core/statistics.py` — `compute_geneset_frequencies()`, `bootstrap_zscores()` (vectorized numpy, chunked), `bootstrap_pvalues()`, `benjamini_hochberg()`, `cohens_d()`, `power_check()`, `diagnostic_ks_tests()`, `compare_to_background()` full pipeline, `binomial_glm_zscores()` (GC3-corrected logistic model), `_compute_gc3()`
 - `codonscope/core/optimality.py` — `OptimalityScorer` class: loads wobble_rules.tsv, computes per-codon tAI and wtAI weights (normalised 0–1, pseudocount for zero-copy anticodons). Provides `gene_tai()`, `gene_wtai()`, `per_position_scores()`, `smooth_profile()`, `classify_codons()` (fast/slow by median threshold).
+- `codonscope/core/cai.py` — Codon Adaptation Index (Sharp & Li 1987). `compute_reference_weights()` from top 5% expressed genes, `compute_cai()` per-gene geometric mean, `cai_analysis()` full pipeline with Mann-Whitney U test and genome percentile rank.
 - `codonscope/core/orthologs.py` — `OrthologDB` class: bidirectional gene mapping between species. Loads TSV from `~/.codonscope/data/orthologs/`. `map_genes()`, `get_all_pairs()`, `n_pairs`.
 
 **Data layer:**
@@ -50,12 +53,12 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `codonscope/modes/mode6_compare.py` — `run_compare()` cross-species comparison. Per-gene RSCU correlation between ortholog pairs. Gene-set vs genome-wide correlation distribution. Bootstrap Z-test + Mann-Whitney U. Divergent gene analysis (different preferred codons tracking tRNA pool differences). Scatter data per amino acid. Two-panel plot (correlation histogram + ranked bar chart).
 
 **Report:**
-- `codonscope/report.py` — `generate_report()` HTML report generator. Runs all applicable modes (1 mono+di, 5, 3, 4, 2, optionally 6) and produces a self-contained HTML file with inline CSS/plots. Gene summary with ID mapping table (Input ID → Gene Name → Ensembl/Systematic ID). Exports `{stem}_results.zip` containing HTML, data/*.tsv files, and README.txt documenting analysis parameters, gene list, file descriptions, pilot gene lists reference, and data sources. Expanded table limits (30 rows for composition/demand, all significant for Mode 5).
+- `codonscope/report.py` — `generate_report()` HTML report generator. Descriptive section names (no "Mode N:" prefixes). Two section groups: "Sequence-Level Analysis" (Codon Enrichment, Dicodon Enrichment, Region-Specific Enrichment, AA vs Synonymous Attribution) and "Translation-Level Analysis" (Translational Optimality Profile, Collision Potential, Translational Demand, Cross-Species Comparison). Gene summary with CAI box plot + histogram. Region-specific enrichment (ramp vs body) with waterfall charts. Ranked waterfall bar charts for all 61 codons (C-ending in red). Collision potential ranked dicodon bar chart (colored by FF/FS/SF/SS). Exports `{stem}_results.zip` with HTML, data/*.tsv, README.txt.
 
 **CLI:**
-- `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `composition`, `demand`, `profile`, `collision`, `disentangle`, `compare`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
+- `codonscope/cli.py` — argparse with subcommands: `download`, `report`, `enrichment` (alias: `composition`), `demand`, `optimality` (alias: `profile`), `collision`, `attribution` (alias: `disentangle`), `compare`, `cai`. Parses gene list files (one-per-line, comma-separated, tab-separated, # comments).
 
-**Tests (338 passing, 6 skipped):**
+**Tests (376 passing, 6 skipped):**
 - `tests/test_chunk1.py` — 23 tests: yeast download files, ID mapping, CDS validation, k-mer counting, backgrounds
 - `tests/test_statistics.py` — 29 tests: bootstrap, BH correction, Cohen's d, KS diagnostics, yeast positive controls (RP genes, YEF3)
 - `tests/test_mode1.py` — 19 tests: gene list parsing, composition pipeline, matched background, diagnostics, CLI, RP positive controls
@@ -65,8 +68,10 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 - `tests/test_mode2.py` — 36 tests: demand vector unit tests, expression loading (yeast + human GTEx), weighted bootstrap, yeast RP demand (optimal codons enriched), Gcn4 demand, human liver demand, CLI
 - `tests/test_mode5.py` — 27 tests: codon table, AA frequencies, RSCU, attribution logic, summary, Gcn4 + RP integration tests, CLI
 - `tests/test_mode6.py` — 36 tests: OrthologDB (7 unit tests), RSCU correlation (4 tests), ortholog download (6 tests), RP comparison yeast→human (10 tests), RP comparison human→yeast (4 tests), divergent analysis, output files, CLI
-- `tests/test_report.py` — 18 tests: HTML report generation (RP + Gcn4 gene sets), all mode sections present, embedded base64 images, gene summary, unmapped genes, cross-species report, CLI, self-contained HTML, inline CSS, output directory creation
+- `tests/test_report.py` — 18 tests: HTML report generation (RP + Gcn4 gene sets), all mode sections present, embedded base64 images, gene summary with CAI, unmapped genes, cross-species report, CLI, self-contained HTML, inline CSS, output directory creation
 - `tests/test_id_resolution.py` — 75 tests: GtRNAdb parser (8 tests: 3 formats, T→U, skip iMet/SeC/Sup, mixed), ID regex patterns (10 tests), ID type detection (12 tests across species), backward-compatible resolution (18 tests: yeast/human/mouse), new ID types (10 tests: RefSeq, SGD, UniProt, MGI, Entrez), mixed ID lists (5 tests), download function imports (7 tests), ortholog dispatcher (4 tests), parse function unit tests (5 tests), IDMapping compat (3 tests). 6 tests skipped until mapping files generated by re-download.
+- `tests/test_cai.py` — 22 tests: reference weights (5 unit tests: range, max per family, single-codon AAs), compute_cai (5 unit tests: range, empty, Met-only, optimal, multi-gene), yeast RP integration (8 tests: high CAI >0.7, Mann-Whitney p<0.001, percentile >80, structure, DataFrames), human RP (2 tests), edge cases (2 tests: single gene, small set)
+- `tests/test_glm.py` — 16 tests: _compute_gc3 (6 unit tests), binomial GLM structure (4 tests: raises k>1, correct columns, 59 codons), GLM vs bootstrap correlation (3 tests: RP r>0.7, Gcn4 correlation, significant overlap), run_composition binomial (3 tests: works, rejects k=2, gc3 columns)
 
 ### Species data (in `~/.codonscope/data/species/`)
 
@@ -172,32 +177,36 @@ python3 -c "from codonscope.data.download import download; download('mouse')"
 # Run tests
 python3 -m pytest tests/ -v
 
-# Mode 1: Composition analysis
-python3 -m codonscope.cli composition --species yeast --genes genelist.txt --kmer 2
+# Codon Enrichment Analysis (was: composition)
+python3 -m codonscope.cli enrichment --species yeast --genes genelist.txt --kmer 2
+python3 -m codonscope.cli enrichment --species yeast --genes genelist.txt --model binomial  # GC3-corrected GLM
 
-# Mode 2: Translational demand (expression-weighted)
+# Translational Demand Analysis
 python3 -m codonscope.cli demand --species yeast --genes genelist.txt
 python3 -m codonscope.cli demand --species human --genes genelist.txt --tissue liver
 
-# Mode 3: Optimality profile (metagene + ramp)
-python3 -m codonscope.cli profile --species yeast --genes genelist.txt --method wtai
+# Translational Optimality Profile (was: profile)
+python3 -m codonscope.cli optimality --species yeast --genes genelist.txt --method wtai
 
-# Mode 4: Collision potential (FS transitions)
+# Collision Potential Analysis
 python3 -m codonscope.cli collision --species yeast --genes genelist.txt
 
-# Mode 5: Disentanglement
-python3 -m codonscope.cli disentangle --species yeast --genes genelist.txt
+# AA vs Synonymous Attribution (was: disentangle)
+python3 -m codonscope.cli attribution --species yeast --genes genelist.txt
 
-# Mode 6: Cross-species comparison
+# Codon Adaptation Index (CAI)
+python3 -m codonscope.cli cai --species yeast --genes genelist.txt
+
+# Cross-Species Comparison
 python3 -c "from codonscope.data.download import download_orthologs; download_orthologs('human', 'yeast')"
 python3 -m codonscope.cli compare --species1 yeast --species2 human --genes genelist.txt
 python3 -m codonscope.cli compare --species1 yeast --species2 human --genes genelist.txt --from-species human
 
 # Mouse analysis
 python3 -m codonscope.cli report --species mouse --genes examples/mouse_rp_genes.txt --output mouse_rp_report.html
-python3 -m codonscope.cli composition --species mouse --genes examples/mouse_rp_genes.txt --kmer 1
+python3 -m codonscope.cli enrichment --species mouse --genes examples/mouse_rp_genes.txt --kmer 1
 
-# Comprehensive HTML report (runs all modes)
+# Comprehensive HTML report (runs all analyses)
 python3 -m codonscope.cli report --species yeast --genes genelist.txt --output report.html
 python3 -m codonscope.cli report --species yeast --genes genelist.txt --species2 human --output report.html
 ```
@@ -206,9 +215,9 @@ python3 -m codonscope.cli report --species yeast --genes genelist.txt --species2
 
 ```
 python >= 3.9
-numpy, scipy, pandas, matplotlib, requests, tqdm
+numpy, scipy, pandas, matplotlib, requests, tqdm, statsmodels
 ```
 
-No BioPython, no pysam. Keep it lightweight.
+No BioPython, no pysam. Keep it lightweight (statsmodels added for binomial GLM).
 
 export PATH="$HOME/.local/bin:$PATH"
