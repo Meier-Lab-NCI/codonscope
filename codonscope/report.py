@@ -7,6 +7,7 @@ and presents results in a clean, readable format.
 
 import base64
 import io
+import json
 import logging
 import time
 import zipfile
@@ -323,6 +324,7 @@ def generate_report(
         sections.append(_section_error("2. Dicodon Enrichment Analysis", exc))
 
     # ── 3. AA vs Synonymous Attribution ──────────────────────────────
+    dis_result = None
     try:
         logger.info("Running AA vs Synonymous Attribution...")
         from codonscope.modes.mode5_disentangle import run_disentangle
@@ -339,6 +341,7 @@ def generate_report(
         sections.append(_section_error("3. AA vs Synonymous Attribution", exc))
 
     # ── 4. Weighted tRNA Adaptation Index ─────────────────────────────
+    prof_result = None
     try:
         logger.info("Running Weighted tRNA Adaptation Index...")
         from codonscope.modes.mode3_profile import run_profile
@@ -362,6 +365,7 @@ def generate_report(
         sections.append(_section_error("4. Weighted tRNA Adaptation Index", exc))
 
     # ── 5. Collision Potential Analysis ───────────────────────────────
+    col_result = None
     try:
         logger.info("Running Collision Potential Analysis...")
         from codonscope.modes.mode4_collision import run_collision
@@ -381,6 +385,7 @@ def generate_report(
         sections.append(_section_error("5. Collision Potential Analysis", exc))
 
     # ── 6. Translational Demand Analysis ─────────────────────────────
+    dem_result = None
     try:
         logger.info("Running Translational Demand Analysis...")
         from codonscope.modes.mode2_demand import run_demand
@@ -398,6 +403,7 @@ def generate_report(
         sections.append(_section_error("6. Translational Demand Analysis", exc))
 
     # ── Cross-Species Comparison (optional, unnumbered) ──────────────
+    cmp_result = None
     if species2:
         try:
             logger.info("Running Cross-Species Comparison...")
@@ -432,15 +438,87 @@ def generate_report(
             data_dir_out / "gene_mapping.tsv", sep="\t", index=False,
         )
 
+    # ── Additional data exports ──────────────────────────────────────────
+
+    # Per-gene codon frequency matrix
+    try:
+        from codonscope.core.statistics import compute_geneset_frequencies
+        gene_seqs = db.get_sequences(id_mapping)
+        per_gene_matrix, gs_mean, kmer_names = compute_geneset_frequencies(gene_seqs, k=1)
+        freq_df = pd.DataFrame(per_gene_matrix, columns=kmer_names, index=sorted(gene_seqs.keys()))
+        freq_df.index.name = "gene"
+        freq_df.to_csv(data_dir_out / "per_gene_codon_freq.tsv", sep="\t", float_format="%.6g")
+    except Exception as exc:
+        logger.warning("Per-gene frequency export failed: %s", exc)
+
+    # Gene metadata for mapped genes
+    try:
+        meta_sub = gene_meta[gene_meta["systematic_name"].isin(list(id_mapping.values()))]
+        meta_sub.to_csv(data_dir_out / "gene_metadata.tsv", sep="\t", index=False, float_format="%.6g")
+    except Exception as exc:
+        logger.warning("Gene metadata export failed: %s", exc)
+
+    # Analysis config
+    config = {
+        "species": species,
+        "n_input_genes": len(gene_ids),
+        "n_mapped_genes": id_mapping.n_mapped,
+        "n_unmapped_genes": id_mapping.n_unmapped,
+        "n_bootstrap": n_bootstrap,
+        "seed": seed,
+        "model": model,
+        "species2": species2,
+        "tissue": tissue,
+        "cell_line": cell_line,
+        "timestamp": datetime.now().isoformat(),
+        "codonscope_version": __version__,
+    }
+    (data_dir_out / "analysis_config.json").write_text(json.dumps(config, indent=2))
+
+    # ── Executive summary + collapsible sections ─────────────────────────
+    # sections[0] is always the Gene List Summary (not collapsible)
+    # sections[1:] are the numbered analysis sections + optional cross-species
+
+    exec_summary = _section_executive_summary(
+        mono_result=mono_result,
+        dis_result=dis_result,
+        col_result=col_result,
+        cai_result=cai_result,
+        species_dir=species_dir,
+    )
+
+    # Wrap each analysis section (index 1+) in collapsible <details>
+    wrapped_sections = [sections[0]]  # Gene List Summary stays unwrapped
+    wrapped_sections.append(exec_summary)  # Executive summary after gene summary
+
+    # Build summary lines for each analysis section
+    section_idx = 1  # Start after gene summary
+    analysis_sections = sections[1:]
+
+    for i, sec_html in enumerate(analysis_sections):
+        summary_line = _compute_summary_line(
+            i, sec_html,
+            mono_result=mono_result,
+            di_result=di_result,
+            dis_result=dis_result,
+            prof_result=prof_result,
+            col_result=col_result,
+            dem_result=dem_result,
+            cmp_result=cmp_result,
+            species2=species2,
+            n_analysis_sections=len(analysis_sections),
+        )
+        wrapped_sections.append(_wrap_collapsible(sec_html, summary_line, open_default=False))
+
     elapsed = time.time() - t0
-    html = _build_html(species, gene_ids, sections, elapsed)
+    html = _build_html(species, gene_ids, wrapped_sections, elapsed)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(html, encoding="utf-8")
     logger.info("Report written to %s (%.1fs)", output, elapsed)
     logger.info("Data tables written to %s/", data_dir_out)
 
-    # ── Create zip with HTML + data TSVs + README ──────────────────────
+    # ── Create zip with HTML + data TSVs + README + JSON ──────────────
     zip_path = output.parent / f"{output.stem}_results.zip"
     readme_text = _generate_readme(
         species=species, gene_ids=gene_ids, id_mapping=id_mapping,
@@ -453,9 +531,99 @@ def generate_report(
         zf.writestr("README.txt", readme_text)
         for tsv_file in sorted(data_dir_out.glob("*.tsv")):
             zf.write(tsv_file, f"data/{tsv_file.name}")
+        for json_file in sorted(data_dir_out.glob("*.json")):
+            zf.write(json_file, f"data/{json_file.name}")
     logger.info("Results zip written to %s", zip_path)
 
     return output
+
+
+def _compute_summary_line(
+    section_index: int,
+    section_html: str,
+    mono_result: dict | None,
+    di_result: dict | None,
+    dis_result: dict | None,
+    prof_result: dict | None,
+    col_result: dict | None,
+    dem_result: dict | None,
+    cmp_result: dict | None,
+    species2: str | None,
+    n_analysis_sections: int,
+) -> str:
+    """Compute a one-line summary for each collapsible section header.
+
+    section_index is 0-based within the analysis sections (after gene summary).
+    The order is: 0=codon enrichment, 1=dicodon enrichment, 2=attribution,
+    3=wtAI, 4=collision, 5=demand, 6=cross-species (if present).
+    """
+    try:
+        if section_index == 0 and mono_result is not None:
+            # Codon Enrichment
+            df = mono_result["results"]
+            sig = df[df["adjusted_p"] < 0.05]
+            n_enr = len(sig[sig["z_score"] > 0])
+            n_dep = len(sig[sig["z_score"] < 0])
+            return f"1. Codon Enrichment Analysis -- {n_enr} enriched, {n_dep} depleted at adj_p < 0.05"
+
+        if section_index == 1 and di_result is not None:
+            # Dicodon Enrichment
+            df = di_result["results"]
+            sig = df[df["adjusted_p"] < 0.05]
+            n_enr = len(sig[sig["z_score"] > 0])
+            n_dep = len(sig[sig["z_score"] < 0])
+            return f"2. Dicodon Enrichment Analysis -- {n_enr} enriched, {n_dep} depleted at adj_p < 0.05"
+
+        if section_index == 2 and dis_result is not None:
+            # Attribution
+            s = dis_result.get("summary", {})
+            n_aa = s.get("n_aa_driven", 0)
+            n_syn = s.get("n_synonymous_driven", 0)
+            n_both = s.get("n_both", 0)
+            total = n_aa + n_syn + n_both
+            if total > 0:
+                pct_aa = 100.0 * n_aa / total
+                pct_syn = 100.0 * n_syn / total
+                pct_both = 100.0 * n_both / total
+                return f"3. AA vs Synonymous Attribution -- {pct_aa:.0f}% AA-driven, {pct_syn:.0f}% synonymous, {pct_both:.0f}% both"
+            return "3. AA vs Synonymous Attribution -- no significant attributions"
+
+        if section_index == 3 and prof_result is not None:
+            # wtAI
+            scores = prof_result["per_gene_scores"]
+            col_name = "wtai" if "wtai" in scores.columns else "tai"
+            mean_score = scores[col_name].mean()
+            ramp = prof_result["ramp_analysis"]
+            delta = ramp["geneset_ramp_delta"]
+            return f"4. Weighted tRNA Adaptation Index -- mean wtAI = {mean_score:.3f}, ramp delta = {delta:+.3f}"
+
+        if section_index == 4 and col_result is not None:
+            # Collision
+            fs_enrich = col_result.get("fs_enrichment", 0)
+            chi2_p = col_result.get("chi2_p", 1.0)
+            return f"5. Collision Potential Analysis -- FS enrichment = {fs_enrich:.3f}, chi2 p = {chi2_p:.2e}"
+
+        if section_index == 5 and dem_result is not None:
+            # Demand
+            df = dem_result["results"]
+            n_sig = len(df[df["adjusted_p"] < 0.05])
+            return f"6. Translational Demand Analysis -- {n_sig} significant codons"
+
+        # Cross-species (index 6, only if species2 is set)
+        if section_index == 6 and cmp_result is not None:
+            s = cmp_result["summary"]
+            mean_r = s["geneset_mean_r"]
+            z = s["z_score"]
+            return f"Cross-Species Comparison -- mean r = {mean_r:.3f}, Z = {z:.2f}"
+
+    except Exception:
+        pass  # Fall through to default
+
+    # Default: extract the section title from the HTML
+    import re
+    m = re.search(r"<h2>(.*?)</h2>", section_html)
+    title = m.group(1) if m else f"Section {section_index + 1}"
+    return title
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -603,6 +771,73 @@ tr:hover td {
 }
 .method-note p { margin: 6px 0; }
 .method-note strong { color: #1e293b; }
+details.collapsible-section {
+    margin: 20px 0;
+}
+details.collapsible-section > summary {
+    cursor: pointer;
+    padding: 12px 18px;
+    background: #f0f4ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 8px;
+    font-weight: 600;
+    color: #1e3a5f;
+    font-size: 0.95em;
+    list-style: none;
+    user-select: none;
+}
+details.collapsible-section > summary::-webkit-details-marker { display: none; }
+details.collapsible-section > summary::before {
+    content: '\25b8 ';
+    font-size: 1.1em;
+}
+details.collapsible-section[open] > summary::before {
+    content: '\25be ';
+}
+details.collapsible-section[open] > summary {
+    border-radius: 8px 8px 0 0;
+    margin-bottom: 0;
+}
+.expand-controls {
+    text-align: right;
+    margin: 10px 0;
+}
+.expand-controls button {
+    background: #e2e8f0;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 0.82em;
+    color: #475569;
+    margin-left: 6px;
+}
+.expand-controls button:hover {
+    background: #cbd5e1;
+}
+.executive-summary {
+    background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 100%);
+    border: 2px solid #6366f1;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin: 20px 0;
+}
+.executive-summary h2 {
+    color: #4338ca;
+    border-bottom: 2px solid #a5b4fc;
+    margin-top: 0;
+}
+.exec-top-codons {
+    display: flex;
+    gap: 20px;
+    margin: 12px 0;
+}
+.exec-top-codons > div {
+    flex: 1;
+}
+.exec-top-codons table {
+    font-size: 0.85em;
+}
 .group-header {
     color: #0f3460;
     font-size: 1.4em;
@@ -638,9 +873,14 @@ def _build_html(
 <p><strong>Species:</strong> {escape(species)} &nbsp;|&nbsp;
    <strong>Input genes:</strong> {len(gene_ids)} &nbsp;|&nbsp;
    <strong>Generated:</strong> {now}</p>
+<div class="expand-controls">
+  <button onclick="document.querySelectorAll('details.collapsible-section').forEach(d=>d.open=true)">Expand All</button>
+  <button onclick="document.querySelectorAll('details.collapsible-section').forEach(d=>d.open=false)">Collapse All</button>
+</div>
 {body}
 <div class="footer">
-  CodonScope v{__version__} &mdash; generated in {elapsed:.1f}s &mdash; {now}
+  <p>CodonScope v{__version__} &mdash; generated in {elapsed:.1f}s &mdash; {now}</p>
+  <p><em>For deeper analysis, run individual modes from the command line or use the deep-dive tools.</em></p>
 </div>
 </body>
 </html>
@@ -851,6 +1091,143 @@ A CAI near 1.0 means the gene uses the same codons as highly-expressed genes;
 lower values indicate divergent codon usage.</p>
 </div>
 """
+
+
+def _wrap_collapsible(section_html: str, summary_line: str, open_default: bool = False) -> str:
+    """Wrap section HTML in a collapsible <details> element.
+
+    Args:
+        section_html: The full section HTML (including its <div class="section"> wrapper).
+        summary_line: A one-line metric preview shown in the collapsed header.
+        open_default: If True, the section starts expanded.
+
+    Returns:
+        HTML string with the section wrapped in <details class="collapsible-section">.
+    """
+    open_attr = " open" if open_default else ""
+    return f'<details class="collapsible-section"{open_attr}><summary>{summary_line}</summary>{section_html}</details>'
+
+
+def _section_executive_summary(
+    mono_result: dict | None,
+    dis_result: dict | None,
+    col_result: dict | None,
+    cai_result: dict | None,
+    species_dir: Path | None = None,
+) -> str:
+    """Executive summary section with key findings from all analyses.
+
+    Provides a quick-glance overview: top enriched/depleted codons,
+    attribution breakdown, collision FS ratio, and a waterfall chart.
+    """
+    parts: list[str] = []
+    parts.append('<div class="executive-summary">')
+    parts.append('<h2>Executive Summary</h2>')
+
+    # ── Top enriched/depleted codons from mono_result ──
+    top_enriched_rows = ""
+    top_depleted_rows = ""
+    n_enriched = 0
+    n_depleted = 0
+    if mono_result is not None:
+        df = mono_result["results"]
+        sig = df[df["adjusted_p"] < 0.05]
+        enriched = sig[sig["z_score"] > 0].sort_values("z_score", ascending=False)
+        depleted = sig[sig["z_score"] < 0].sort_values("z_score", ascending=True)
+        n_enriched = len(enriched)
+        n_depleted = len(depleted)
+
+        for _, row in enriched.head(5).iterrows():
+            aa_str = str(row.get("amino_acid", "")) if "amino_acid" in row.index else ""
+            top_enriched_rows += (
+                f'<tr><td><strong>{escape(str(row["kmer"]))}</strong></td>'
+                f'<td>{escape(aa_str)}</td>'
+                f'<td class="sig-pos">{row["z_score"]:+.2f}</td>'
+                f'<td>{row["adjusted_p"]:.2e}</td></tr>\n'
+            )
+
+        for _, row in depleted.head(5).iterrows():
+            aa_str = str(row.get("amino_acid", "")) if "amino_acid" in row.index else ""
+            top_depleted_rows += (
+                f'<tr><td><strong>{escape(str(row["kmer"]))}</strong></td>'
+                f'<td>{escape(aa_str)}</td>'
+                f'<td class="sig-neg">{row["z_score"]:+.2f}</td>'
+                f'<td>{row["adjusted_p"]:.2e}</td></tr>\n'
+            )
+
+    if top_enriched_rows or top_depleted_rows:
+        enriched_table = (
+            f'<div><h4>Top Enriched ({n_enriched} total)</h4>'
+            f'<table><tr><th>Codon</th><th>AA</th><th>Z</th><th>Adj. p</th></tr>'
+            f'{top_enriched_rows}</table></div>'
+        ) if top_enriched_rows else '<div><h4>Top Enriched</h4><p><em>None</em></p></div>'
+        depleted_table = (
+            f'<div><h4>Top Depleted ({n_depleted} total)</h4>'
+            f'<table><tr><th>Codon</th><th>AA</th><th>Z</th><th>Adj. p</th></tr>'
+            f'{top_depleted_rows}</table></div>'
+        ) if top_depleted_rows else '<div><h4>Top Depleted</h4><p><em>None</em></p></div>'
+        parts.append(f'<div class="exec-top-codons">{enriched_table}{depleted_table}</div>')
+    else:
+        parts.append('<p><em>Codon enrichment data not available.</em></p>')
+
+    # ── Attribution breakdown ──
+    if dis_result is not None:
+        summary = dis_result.get("summary", {})
+        n_aa = summary.get("n_aa_driven", 0)
+        n_syn = summary.get("n_synonymous_driven", 0)
+        n_both = summary.get("n_both", 0)
+        total_attr = n_aa + n_syn + n_both
+        if total_attr > 0:
+            pct_aa = 100.0 * n_aa / total_attr
+            pct_syn = 100.0 * n_syn / total_attr
+            pct_both = 100.0 * n_both / total_attr
+            parts.append(
+                f'<p><strong>Attribution:</strong> '
+                f'<span class="badge badge-aa">{pct_aa:.0f}% AA-driven ({n_aa})</span> '
+                f'<span class="badge badge-syn">{pct_syn:.0f}% Synonymous ({n_syn})</span> '
+                f'<span class="badge badge-both">{pct_both:.0f}% Both ({n_both})</span></p>'
+            )
+        else:
+            parts.append('<p><strong>Attribution:</strong> <em>No significant attributions.</em></p>')
+    else:
+        parts.append('<p><strong>Attribution:</strong> <em>N/A</em></p>')
+
+    # ── Collision FS ratio ──
+    if col_result is not None:
+        fs_enrich = col_result.get("fs_enrichment", 0)
+        chi2_p = col_result.get("chi2_p", 1.0)
+        parts.append(
+            f'<p><strong>Collision potential:</strong> '
+            f'FS enrichment = {fs_enrich:.3f}, '
+            f'chi2 p = {chi2_p:.2e}</p>'
+        )
+    else:
+        parts.append('<p><strong>Collision potential:</strong> <em>N/A</em></p>')
+
+    # ── CAI ──
+    if cai_result is not None:
+        gs_mean = cai_result.get("geneset_mean", 0)
+        percentile = cai_result.get("percentile_rank", 0)
+        parts.append(
+            f'<p><strong>CAI:</strong> '
+            f'Gene set mean = {gs_mean:.3f}, '
+            f'genome percentile = {percentile:.0f}th</p>'
+        )
+
+    # ── Waterfall chart ──
+    if mono_result is not None:
+        try:
+            wf_b64 = _plot_waterfall(
+                mono_result["results"],
+                "Executive Summary: Ranked Codon Z-scores",
+                species_dir=species_dir,
+            )
+            parts.append(f'<div class="plot-container">{_img_tag(wf_b64)}</div>')
+        except Exception:
+            pass  # Skip waterfall if plotting fails
+
+    parts.append('</div>')
+    return "\n".join(parts)
 
 
 def _section_region_enrichment(region_results: dict, full_result: dict | None) -> str:

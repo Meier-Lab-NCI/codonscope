@@ -330,6 +330,129 @@ def main(argv: list[str] | None = None) -> int:
         help="Override default data directory",
     )
 
+    # ── reverse ──────────────────────────────────────────────────────────
+    rev_parser = subparsers.add_parser(
+        "reverse", help="Find genes enriched for specific codons",
+    )
+    rev_parser.add_argument(
+        "--species", required=True, help="Species name (e.g. yeast, human)"
+    )
+    rev_parser.add_argument(
+        "--codons", required=True, nargs="+",
+        help="Target codons (e.g. AGA GAA)",
+    )
+    rev_parser.add_argument(
+        "--top", type=int, default=None,
+        help="Return top N genes",
+    )
+    rev_parser.add_argument(
+        "--zscore-cutoff", type=float, default=None,
+        help="Minimum combined Z-score (default: 2.0 if no other filter)",
+    )
+    rev_parser.add_argument(
+        "--percentile", type=float, default=None,
+        help="Minimum percentile rank (0-100)",
+    )
+    rev_parser.add_argument(
+        "--check", action="store_true",
+        help="Run enrichment analysis on result gene list",
+    )
+    rev_parser.add_argument(
+        "--output-dir", type=str, default="./codonscope_output",
+        help="Output directory (default: ./codonscope_output)",
+    )
+    rev_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory",
+    )
+
+    # ── deep-dive ────────────────────────────────────────────────────────
+    dd_parser = subparsers.add_parser(
+        "deep-dive", help="Deep-dive analysis on Tier 1 report data",
+    )
+    dd_parser.add_argument(
+        "--results-dir", required=True,
+        help="Path to the report data directory ({stem}_data/)",
+    )
+    dd_parser.add_argument(
+        "--output", type=str, default="deep_dive.html",
+        help="Output HTML file path (default: deep_dive.html)",
+    )
+    dd_parser.add_argument(
+        "--adj-p", type=float, default=0.05,
+        help="Adjusted p-value threshold (default: 0.05)",
+    )
+    dd_parser.add_argument(
+        "--output-dir", type=str, default=None,
+        help="Output directory for TSV files",
+    )
+    dd_parser.add_argument(
+        "--positional", action="store_true",
+        help="Run positional enrichment heatmap",
+    )
+    dd_parser.add_argument(
+        "--cluster", action="store_true",
+        help="Run codon cluster scanning",
+    )
+    dd_parser.add_argument(
+        "--cluster-codons", nargs="+", default=None,
+        help="Target codons for cluster scan",
+    )
+    dd_parser.add_argument(
+        "--cluster-top", type=int, default=5,
+        help="Auto-select top N enriched codons (default: 5)",
+    )
+    dd_parser.add_argument(
+        "--window", type=int, default=15,
+        help="Sliding window size for clusters (default: 15)",
+    )
+    dd_parser.add_argument(
+        "--permutations", type=int, default=1000,
+        help="Number of permutations for cluster test (default: 1000)",
+    )
+    dd_parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed",
+    )
+
+    # ── differential ─────────────────────────────────────────────────────
+    diff_parser = subparsers.add_parser(
+        "differential", help="Compare codon usage between two gene lists",
+    )
+    diff_parser.add_argument(
+        "--species", required=True, help="Species name (e.g. yeast, human)"
+    )
+    diff_parser.add_argument(
+        "--list-a", required=True, help="Path to first gene list"
+    )
+    diff_parser.add_argument(
+        "--list-b", required=True, help="Path to second gene list"
+    )
+    diff_parser.add_argument(
+        "--labels", nargs=2, default=["List A", "List B"],
+        help="Labels for the two lists (default: 'List A' 'List B')"
+    )
+    diff_parser.add_argument(
+        "--output", type=str, default=None,
+        help="Output HTML report path (optional)"
+    )
+    diff_parser.add_argument(
+        "--n-bootstrap", type=int, default=10000,
+        help="Number of bootstrap iterations (default: 10000)"
+    )
+    diff_parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Random seed for reproducibility"
+    )
+    diff_parser.add_argument(
+        "--output-dir", type=str, default=None,
+        help="Output directory for TSV files"
+    )
+    diff_parser.add_argument(
+        "--data-dir", type=str, default=None,
+        help="Override default data directory"
+    )
+
     args = parser.parse_args(argv)
 
     # Set up logging
@@ -361,6 +484,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_disentangle(args)
     elif args.command == "cai":
         return _cmd_cai(args)
+    elif args.command == "reverse":
+        return _cmd_reverse(args)
+    elif args.command == "deep-dive":
+        return _cmd_deep_dive(args)
+    elif args.command == "differential":
+        return _cmd_differential(args)
     else:
         parser.print_help()
         return 1
@@ -862,6 +991,217 @@ def _cmd_cai(args: argparse.Namespace) -> int:
         pd.DataFrame([
             {"codon": c, "weight": w} for c, w in sorted(result["weights"].items())
         ]).to_csv(out / "cai_weights.tsv", sep="\t", index=False, float_format="%.6g")
+        print(f"\nOutput files written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_reverse(args: argparse.Namespace) -> int:
+    """Handle the reverse subcommand."""
+    from codonscope.modes.reverse import run_reverse
+
+    print("CodonScope: Reverse Codon Analysis")
+    print(f"  Species: {args.species}")
+    print(f"  Target codons: {' '.join(args.codons)}")
+    if args.top:
+        print(f"  Top N: {args.top}")
+    if args.zscore_cutoff is not None:
+        print(f"  Z-score cutoff: {args.zscore_cutoff}")
+    if args.percentile is not None:
+        print(f"  Percentile cutoff: {args.percentile}")
+    print()
+
+    result = run_reverse(
+        species=args.species,
+        codons=args.codons,
+        top=args.top,
+        zscore_cutoff=args.zscore_cutoff,
+        percentile=args.percentile,
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        check=args.check,
+    )
+
+    df = result["gene_table"]
+    print(f"Genome genes: {result['n_genome_genes']}")
+    print(f"Target codons: {result['codon_info']}")
+    print(f"Genes passing filter: {len(df)}")
+
+    # Show top results
+    print(f"\nTop genes enriched for {' '.join(result['target_codons'])}:")
+    for _, row in df.head(20).iterrows():
+        name = row["gene_name"] if row["gene_name"] != row["gene"] else row["gene"]
+        print(f"  {name:>15s} ({row['gene']})  Z={row['combined_z']:+6.2f}  "
+              f"freq={row['sum_freq']:.4f}")
+
+    if result["check_result"]:
+        check = result["check_result"]
+        check_df = check["results"]
+        for codon in result["target_codons"]:
+            match = check_df[check_df["kmer"] == codon]
+            if len(match) > 0:
+                r = match.iloc[0]
+                print(f"\n  Check: {codon} Z={r['z_score']:+.2f} adj_p={r['adjusted_p']:.2e}")
+
+    if args.output_dir:
+        print(f"\nOutput files written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_deep_dive(args: argparse.Namespace) -> int:
+    """Handle the deep-dive subcommand."""
+    from codonscope.modes.deep_dive import (
+        generate_deep_dive_report,
+        run_driver_analysis,
+        run_positional_enrichment,
+        run_cluster_scan,
+    )
+
+    print("CodonScope: Deep-Dive Analysis")
+    print(f"  Results dir: {args.results_dir}")
+    print()
+
+    # Generate HTML report
+    output = generate_deep_dive_report(
+        results_dir=args.results_dir,
+        output=args.output,
+        adj_p_threshold=args.adj_p,
+    )
+    print(f"Deep-dive report written to {output}")
+
+    # Also write TSVs if output-dir specified
+    if args.output_dir:
+        result = run_driver_analysis(
+            results_dir=args.results_dir,
+            adj_p_threshold=args.adj_p,
+            output_dir=args.output_dir,
+        )
+        print(f"  Significant codons: {len(result['significant_codons'])}")
+        print(f"  Driver TSVs written to {args.output_dir}/")
+
+    # Run positional enrichment if requested
+    if args.positional:
+        print("\nRunning positional enrichment analysis...")
+        pos_result = run_positional_enrichment(
+            results_dir=args.results_dir,
+            output_dir=args.output_dir,
+        )
+        print(f"  Species: {pos_result['species']}")
+        print(f"  Genes: {pos_result['n_genes']}")
+        print(f"  Bins: {pos_result['n_bins']}")
+        print(f"  Top enriched codons: {[c for c, z in pos_result['top_enriched']]}")
+        print(f"  Top depleted codons: {[c for c, z in pos_result['top_depleted']]}")
+        if args.output_dir:
+            print(f"  Positional enrichment matrix written to {args.output_dir}/")
+
+    # Run cluster scan if requested
+    if args.cluster:
+        print("\nRunning codon cluster scan...")
+        cluster_result = run_cluster_scan(
+            results_dir=args.results_dir,
+            codons=args.cluster_codons,
+            top_n=args.cluster_top,
+            window=args.window,
+            n_permutations=args.permutations,
+            seed=args.seed,
+            output_dir=args.output_dir,
+        )
+        print(f"  Target codons: {cluster_result['target_codons']}")
+        print(f"  Genes analyzed: {cluster_result['n_genes']}")
+        summary = cluster_result['summary']
+        print(f"  Significant clusters: {summary['n_significant']}/{summary['n_genes']} genes ({summary['frac_significant']:.1%})")
+        print(f"  Mean runs: {summary['mean_runs']:.2f}")
+        print(f"  Mean max run length: {summary['mean_max_run']:.2f}")
+        if args.output_dir:
+            print(f"  Cluster scan results written to {args.output_dir}/")
+
+    return 0
+
+
+def _cmd_differential(args: argparse.Namespace) -> int:
+    """Handle the differential subcommand."""
+    from codonscope.modes.differential import generate_differential_report, run_differential
+
+    # Parse gene lists
+    gene_ids_a = _parse_gene_list(args.list_a)
+    gene_ids_b = _parse_gene_list(args.list_b)
+
+    if not gene_ids_a:
+        logging.error("No gene IDs found in %s", args.list_a)
+        return 1
+    if not gene_ids_b:
+        logging.error("No gene IDs found in %s", args.list_b)
+        return 1
+
+    labels = tuple(args.labels)
+
+    print("CodonScope: Differential Codon Usage Analysis")
+    print(f"  Species: {args.species}")
+    print(f"  {labels[0]}: {len(gene_ids_a)} IDs from {args.list_a}")
+    print(f"  {labels[1]}: {len(gene_ids_b)} IDs from {args.list_b}")
+    print()
+
+    # Generate report if --output specified
+    if args.output:
+        output = generate_differential_report(
+            species=args.species,
+            gene_ids_a=gene_ids_a,
+            gene_ids_b=gene_ids_b,
+            labels=labels,
+            output=args.output,
+            n_bootstrap=args.n_bootstrap,
+            seed=args.seed,
+            output_dir=args.output_dir,
+            data_dir=args.data_dir,
+        )
+        print(f"HTML report written to {output}")
+        return 0
+
+    # Otherwise just run analysis and print summary
+    result = run_differential(
+        species=args.species,
+        gene_ids_a=gene_ids_a,
+        gene_ids_b=gene_ids_b,
+        labels=labels,
+        n_bootstrap=args.n_bootstrap,
+        seed=args.seed,
+        output_dir=args.output_dir,
+        data_dir=args.data_dir,
+    )
+
+    df = result["results"]
+    print(f"Genes analyzed: {result['n_genes_a']} ({labels[0]}) vs {result['n_genes_b']} ({labels[1]})")
+
+    # Summary of significant codons
+    sig = df[df["adjusted_p"] < 0.05]
+    print(f"\nSignificant differential codons (adj_p < 0.05): {len(sig)}")
+
+    if len(sig) > 0:
+        a_enriched = sig[sig["rank_biserial_r"] > 0]
+        b_enriched = sig[sig["rank_biserial_r"] < 0]
+        print(f"  Enriched in {labels[0]}: {len(a_enriched)}")
+        print(f"  Enriched in {labels[1]}: {len(b_enriched)}")
+
+        # Top enriched in A
+        if len(a_enriched) > 0:
+            print(f"\nTop enriched in {labels[0]}:")
+            for _, row in a_enriched.head(10).iterrows():
+                print(f"  {row['kmer']} ({row['amino_acid']})  "
+                      f"r={row['rank_biserial_r']:+.3f}  "
+                      f"fold={row['fold_change']:.2f}  "
+                      f"adj_p={row['adjusted_p']:.2e}")
+
+        # Top enriched in B
+        if len(b_enriched) > 0:
+            print(f"\nTop enriched in {labels[1]}:")
+            for _, row in b_enriched.head(10).iterrows():
+                print(f"  {row['kmer']} ({row['amino_acid']})  "
+                      f"r={row['rank_biserial_r']:+.3f}  "
+                      f"fold={row['fold_change']:.2f}  "
+                      f"adj_p={row['adjusted_p']:.2e}")
+
+    if args.output_dir:
         print(f"\nOutput files written to {args.output_dir}/")
 
     return 0
