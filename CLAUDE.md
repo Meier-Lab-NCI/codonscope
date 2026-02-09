@@ -8,7 +8,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 
 ## Current status
 
-**376 tests passing (+ 6 skipped pending re-download). 32 commits on main.**
+**376 tests passing (+ 6 skipped pending re-download). 38 commits on main.**
 
 ### Build progress
 
@@ -29,6 +29,7 @@ Read `CodonScope_Project_Spec.md` for the complete project specification includi
 | 13 | Pilot gene lists, Colab UX improvements | ✅ Done |
 | 14 | CAI + binomial GLM alternative for Mode 1 | ✅ Done |
 | 15 | Descriptive mode names, waterfall charts, region enrichment | ✅ Done |
+| 16 | Numbered report sections, wobble coloring, dicodon region enrichment | ✅ Done |
 
 ### What exists (files and what they do)
 

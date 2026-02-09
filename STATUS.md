@@ -1,7 +1,7 @@
 # CodonScope Implementation Status
 
 Last updated: 2026-02-08
-376 tests passing + 6 skipped. 32 commits on main. Version 0.1.0.
+376 tests passing + 6 skipped. 38 commits on main. Version 0.1.0.
 
 ---
 
