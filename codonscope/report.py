@@ -1972,6 +1972,26 @@ expected pattern for highly-translated genes. If your gene set shows a bigger
 ramp than the genome, that&rsquo;s a hint these genes are under translational
 selection pressure. Or they just happen to start with rare codons. Biology is
 fun like that.</p>
+<p><strong>How this relates to published tAI.</strong> The original tRNA Adaptation
+Index (dos Reis et al., <em>Nucleic Acids Res.</em> 2004) computes per-codon weights
+by summing across <em>all</em> anticodons that can decode each codon, weighted by
+optimized &ldquo;s-values&rdquo; representing codon&ndash;anticodon pairing
+efficiencies. Those s-values were fit to maximise correlation with protein
+abundance in <em>S.&nbsp;cerevisiae</em>. Our wtAI is a simplified variant: we
+assign one primary decoding anticodon per codon (from curated wobble rules with
+tRNA modification annotations), use tRNA gene copy numbers directly as weights,
+and apply a uniform 0.5&times; wobble penalty instead of per-pairing-type
+s-values. This approach is common in modern tools (e.g.&nbsp;stAIcalc, Sabi
+&amp; Tuller 2017). The geometric mean calculation is identical. Absolute
+wtAI values are not directly comparable to published tAI values from other
+software, but <strong>relative comparisons</strong> (gene set vs genome,
+ramp vs body) are robust &mdash; the same normalisation applies to both
+sides. For yeast ribosomal proteins our wtAI places them at the 98th genome
+percentile (Mann&ndash;Whitney <em>p</em>&nbsp;&lt;&nbsp;10<sup>&minus;17</sup>);
+for human RP genes, the 83rd percentile
+(<em>p</em>&nbsp;&lt;&nbsp;10<sup>&minus;12</sup>), consistent with the
+known weaker translational selection signal in mammals
+(Pouyet et al., <em>Genome Biol. Evol.</em> 2017).</p>
 </div>"""
 
     # Ramp vs body composition tables
